@@ -6,7 +6,7 @@
 
 [English](./README.en.md) | 简体中文
 
-> 把 DeepSeek TUI 的本地智能体能力带进桌面窗口：聊天、读写项目、审查改动、管理 Skill/MCP 和更新，都在一个图形化工作台里完成。
+> 把 DeepSeek TUI 的本地智能体能力带进桌面窗口：**Code** 写代码、**Write** 写文档、**Claw** 接 IM 自动化——聊天、审查改动、管理 Skill/MCP 和更新，都在一个图形化工作台里完成。
 
 [官网](https://deepseek-gui.com)
 
@@ -52,6 +52,48 @@ DeepSeek GUI 是一个面向开发者和高频 AI 工作者的本地桌面工作
 - 希望清楚看到智能体做了什么、改了哪些文件、哪些操作需要批准的团队。
 - 需要长期维护多个项目、多个会话，并希望把 Skill/MCP 配置沉淀下来的用户。
 - 想用本地工作台连接 DeepSeek 官方 API 或 OpenAI 兼容服务的人。
+
+---
+
+## 三种工作台模式
+
+DeepSeek GUI 在左侧顶栏提供 **Code**、**Write**、**Claw** 三种模式，分别面向代码开发、长文写作和后台自动化。三种模式共享同一套 DeepSeek 运行时与设置，但会话、工作区和界面布局彼此独立，可按任务随时切换。
+
+### Code 模式
+
+面向真实代码库的开发工作台：绑定本地项目目录，围绕仓库读写文件、执行命令、审查改动。
+
+<p align="center">
+  <img src="src/asset/img/codemode.png" alt="DeepSeek GUI Code 模式" width="860">
+</p>
+
+- 按工作区管理多个 Agent 会话，实时查看推理、工具调用与文件变更。
+- 支持内联 diff、变更审查面板，以及只读 / 工作区可写 / 完全访问等权限策略。
+- 提供快捷任务卡片，可一键发起结构梳理、排错、实现方案或 UI 优化等对话。
+
+### Write 模式
+
+独立的 Markdown 写作工作台，把写作文件、保存状态与 AI 助手从 Code 会话里拆出来单独管理。
+
+<p align="center">
+  <img src="src/asset/img/writemode.png" alt="DeepSeek GUI Write 模式" width="860">
+</p>
+
+- 管理 `~/.deepseekgui/write_workspace` 与多个自定义写作空间，左侧文件树支持新建、重命名与删除。
+- 编辑器支持 **Live / Source / Split / Preview**，Live 模式在当前行保留 Markdown 源码，其余行实时渲染。
+- 内置 DeepSeek FIM 短补全与灵感长补全；选中文本可唤起 inline agent，右侧写作助手支持摘要、大纲与润色等快捷操作。
+
+### Claw 模式
+
+后台自动化与 IM 接入工作台，让 Agent 在普通聊天之外持续处理消息与定时任务。
+
+<p align="center">
+  <img src="src/asset/img/clawmode.png" alt="DeepSeek GUI Claw 模式" width="860">
+</p>
+
+- 为飞书 / Lark 等渠道配置独立 Agent，分别设定人设、默认模型与工作目录。
+- 每个 IM Agent 拥有独立会话线程，可在 GUI 内直接调试回复与工具调用。
+- 支持本地 webhook / relay 与定时任务，适合把 DeepSeek 接到团队协作或自动化流程中。
 
 ---
 
@@ -103,7 +145,7 @@ npm install --registry=https://registry.npmmirror.com
 4. 选择默认工作目录，或使用应用自动创建的默认目录。
 5. 新建会话，输入任务，让智能体开始工作。
 
-常用流程：
+常用流程（**Code 模式**）：
 
 - 在左侧选择或切换工作区。
 - 在聊天框描述你要完成的任务。
@@ -111,19 +153,10 @@ npm install --registry=https://registry.npmmirror.com
 - 对需要审批的操作选择允许或拒绝。
 - 在变更审查面板里检查改动，再决定下一步。
 
-如果你想开启 Claw 自动化：
+**Claw** 与 **Write** 模式的详细说明见上文 [三种工作台模式](#三种工作台模式)。简要步骤：
 
-- 在设置页打开 `Claw`，启用后台自动化。
-- 添加飞书 / Lark 连接，为每个连接配置 Agent 名称、人设、默认模型和工作目录。
-- 按需开启本地 webhook / relay，并创建定时任务，让 Claw 在后台持续处理消息或周期性任务。
-
-如果你想使用 Write 写作模式：
-
-- 切到 `Write` 后，默认会使用 `~/.deepseekgui/write_workspace`，并自动准备欢迎文档。
-- 也可以在左侧添加多个写作空间，像项目工作区一样管理 Markdown 文件、文件夹、重命名和删除。
-- Markdown 编辑器支持 source/live/split/preview，live 模式会在当前行保留源码，在其他行渲染标题、任务列表、图片和表格。
-- 文本补全直接调用 DeepSeek FIM Completion API，使用设置页同步的 DeepSeek API Key；短补全服务心流输入，灵感长补全会在光标停留更久且处于行尾 / 段落边界时给出下一句或下一段。默认会先在当前写作空间做 BM25 + 关键词检索，把相关片段作为 reference-only 上下文加入补全。
-- 选中文本后会出现 inline agent 输入框，可把选区作为结构化引用发送给右侧写作助手。
+- **Claw**：在设置页启用后台自动化 → 添加飞书 / Lark 连接 → 配置 Agent 人设、模型与工作目录 → 按需开启 webhook / relay 或定时任务。
+- **Write**：切换到 Write 模式 → 使用默认写作空间或添加新空间 → 在 Live 编辑器中写作，配合补全、选区 inline agent 与右侧写作助手。
 
 ## 设置与使用
 

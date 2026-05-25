@@ -6,7 +6,7 @@
 
 [简体中文](./README.md) | English
 
-> Bring the local DeepSeek TUI agent into a desktop workbench: chat, workspaces, change review, Skill/MCP management, and updates in one graphical app.
+> Bring the local DeepSeek TUI agent into a desktop workbench: **Code** for development, **Write** for documents, **Claw** for IM automation—chat, change review, Skill/MCP management, and updates in one graphical app.
 
 [Website](https://deepseek-gui.com)
 
@@ -52,6 +52,48 @@ The goal is not to ship another chat wrapper. The goal is to make DeepSeek feel 
 - Teams that need to see what the agent did, which files changed, and which operations required approval.
 - Users who maintain multiple projects or long-running conversations and want reusable Skill/MCP setup.
 - Anyone who wants a local desktop workbench connected to the official DeepSeek API or a compatible endpoint.
+
+---
+
+## Three Workbench Modes
+
+DeepSeek GUI exposes three modes in the top-left sidebar: **Code**, **Write**, and **Claw**. They share the same DeepSeek runtime and settings, but keep sessions, workspaces, and layouts separate so you can switch by task.
+
+### Code Mode
+
+The development workbench for real codebases: bind a local project directory, read and edit files, run commands, and review changes.
+
+<p align="center">
+  <img src="src/asset/img/codemode.png" alt="DeepSeek GUI Code mode" width="860">
+</p>
+
+- Organize multiple agent sessions by workspace, with streamed reasoning, tool calls, and file changes in one view.
+- Inline diffs, a change-review panel, and permission modes from read-only to full access.
+- Quick-start cards for common tasks such as project mapping, bug fixing, implementation planning, and UI polish.
+
+### Write Mode
+
+A dedicated Markdown writing workbench that keeps writing files, save state, and AI assistance separate from Code sessions.
+
+<p align="center">
+  <img src="src/asset/img/writemode.png" alt="DeepSeek GUI Write mode" width="860">
+</p>
+
+- Manage `~/.deepseekgui/write_workspace` plus custom writing spaces from the left file tree.
+- Switch between **Live / Source / Split / Preview**; Live keeps Markdown source on the active line and renders the rest.
+- DeepSeek FIM short and inspiration completion, plus selection-based inline agent actions and a right-side writing assistant for summaries, outlines, and polish.
+
+### Claw Mode
+
+Background automation and IM integration, so agents can keep handling messages and scheduled jobs outside normal chat.
+
+<p align="center">
+  <img src="src/asset/img/clawmode.png" alt="DeepSeek GUI Claw mode" width="860">
+</p>
+
+- Configure dedicated agents for Feishu / Lark and other channels, each with its own profile, default model, and workspace.
+- Every IM agent gets its own thread, so you can debug replies and tool calls directly in the GUI.
+- Local webhook / relay support and scheduled tasks for team workflows and automation.
 
 ---
 
@@ -103,7 +145,7 @@ npm install --registry=https://registry.npmmirror.com
 4. Choose a default workspace, or use the default directory created by the app.
 5. Start a new session and describe the task you want the agent to handle.
 
-Typical flow:
+Typical flow (**Code mode**):
 
 - Pick or switch a workspace from the sidebar.
 - Describe the task in the composer.
@@ -111,19 +153,10 @@ Typical flow:
 - Allow or deny actions that require approval.
 - Inspect changes in the review panel before deciding what to do next.
 
-If you want to use Claw automation:
+See [Three Workbench Modes](#three-workbench-modes) above for Claw and Write details. Quick start:
 
-- Open `Claw` in Settings and enable background automation.
-- Add a Feishu / Lark connection, then configure the agent name, profile, default model, and workspace for that channel.
-- Enable the local webhook / relay path if needed, and create scheduled tasks so Claw can keep handling inbound messages or periodic jobs in the background.
-
-If you want to use Write mode:
-
-- Switch to `Write`; the app uses `~/.deepseekgui/write_workspace` by default and prepares a welcome document.
-- Add multiple writing spaces from the left sidebar, then manage Markdown files, folders, renames, and deletion like a project tree.
-- The Markdown editor supports source/live/split/preview. Live mode keeps Markdown source visible on the active line and renders headings, task lists, images, and tables elsewhere.
-- Text completion calls the DeepSeek FIM Completion API directly, using the DeepSeek API key synced from Settings. Short completion protects flow typing, while inspiration completion waits for a longer pause at a line end or paragraph boundary before offering a fuller next sentence or paragraph. By default, completion first runs BM25 + keyword retrieval across the active writing space and adds relevant snippets as reference-only context.
-- Selecting text opens an inline agent input so the selection can be sent to the right-side writing assistant as structured quoted context.
+- **Claw**: enable background automation in Settings → add a Feishu / Lark connection → configure agent profile, model, and workspace → optionally enable webhook / relay or scheduled tasks.
+- **Write**: switch to Write mode → use the default writing space or add a new one → write in the Live editor with completion, selection inline agent, and the right-side writing assistant.
 
 ## Usage and Settings
 
