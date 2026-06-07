@@ -13,8 +13,9 @@ import {
 import {
   FloatingComposerModelPicker,
   calculateFloatingMenuPlacement,
-  calculateFloatingSubmenuPlacement,
-  composerReasoningEffortRequestValue
+  composerReasoningEffortRequestValue,
+  normalizeComposerProviderExpansion,
+  toggleComposerProviderExpansion
 } from './FloatingComposerModelPicker'
 import { getGoalPanelDraftObjective } from './floating-composer-commands'
 import { useChatStore } from '../../store/chat-store'
@@ -168,24 +169,12 @@ describe('FloatingComposer model controls', () => {
     expect(placement.top).toBe(633)
   })
 
-  it('keeps the provider submenu inside the viewport', () => {
-    const rightPlacement = calculateFloatingSubmenuPlacement({
-      anchorRect: { top: 640, right: 520, bottom: 676, left: 312 },
-      submenuHeight: 180,
-      viewportHeight: 720,
-      viewportWidth: 900
-    })
-    const leftPlacement = calculateFloatingSubmenuPlacement({
-      anchorRect: { top: 640, right: 880, bottom: 676, left: 672 },
-      submenuHeight: 180,
-      viewportHeight: 720,
-      viewportWidth: 900
-    })
-
-    expect(rightPlacement.left).toBe(526)
-    expect(rightPlacement.top).toBe(528)
-    expect(leftPlacement.left).toBe(434)
-    expect(leftPlacement.top).toBe(528)
+  it('keeps provider model groups collapsed until a provider is toggled', () => {
+    expect(normalizeComposerProviderExpansion(null, ['deepseek'])).toBeNull()
+    expect(normalizeComposerProviderExpansion('missing', ['deepseek'])).toBeNull()
+    expect(normalizeComposerProviderExpansion('deepseek', ['deepseek'])).toBe('deepseek')
+    expect(toggleComposerProviderExpansion(null, 'deepseek')).toBe('deepseek')
+    expect(toggleComposerProviderExpansion('deepseek', 'deepseek')).toBeNull()
   })
 
   it('keeps the reasoning strength visible in the model control', () => {

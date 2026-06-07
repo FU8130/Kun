@@ -108,7 +108,7 @@ export function InitialSetupDialog(): ReactElement {
 
   if (!form) {
     return (
-      <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur-md dark:bg-black/70">
+      <div className="ds-no-drag fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur-md dark:bg-black/70">
         <div className="rounded-xl border border-ds-border bg-ds-card/95 px-5 py-4 text-sm text-ds-muted shadow-panel backdrop-blur-xl">
           {t('loading')}
         </div>
@@ -129,7 +129,7 @@ export function InitialSetupDialog(): ReactElement {
   const labelClass = 'text-sm font-semibold text-slate-700 dark:text-slate-200'
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-[#eef2fb]/45 p-3 backdrop-blur-[18px] dark:bg-black/62 dark:backdrop-blur-[22px] sm:p-6">
+    <div className="ds-no-drag fixed inset-0 z-50 overflow-y-auto bg-[#eef2fb]/45 p-3 backdrop-blur-[18px] dark:bg-black/62 dark:backdrop-blur-[22px] sm:p-6">
       <div className="flex min-h-full items-center justify-center">
         <section
           role="dialog"

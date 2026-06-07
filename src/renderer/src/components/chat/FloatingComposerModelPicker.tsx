@@ -40,15 +40,7 @@ type FloatingMenuPlacement = {
   maxHeight: number
 }
 
-type FloatingSubmenuPlacement = {
-  left: number
-  top: number
-  width: number
-  maxHeight: number
-}
-
 type FloatingMenuAnchorRect = Pick<DOMRect, 'bottom' | 'right' | 'top'>
-type FloatingSubmenuAnchorRect = Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top'>
 
 type ComposerModelMenuGroup = {
   providerId: string
@@ -62,10 +54,6 @@ const FLOATING_MENU_WIDTH = 208
 const FLOATING_MENU_MIN_WIDTH = 176
 const FLOATING_MENU_MIN_HEIGHT = 112
 const FLOATING_MENU_MAX_HEIGHT = 336
-const FLOATING_SUBMENU_GAP = 6
-const FLOATING_SUBMENU_WIDTH = 232
-const FLOATING_SUBMENU_MIN_HEIGHT = 80
-const FLOATING_SUBMENU_MAX_HEIGHT = 320
 const UNGROUPED_MODEL_PROVIDER_ID = '__composer_models__'
 
 export function FloatingComposerModelPicker({
@@ -83,12 +71,9 @@ export function FloatingComposerModelPicker({
   const { t } = useTranslation('common')
   const pickerRef = useRef<HTMLElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
-  const submenuRef = useRef<HTMLDivElement | null>(null)
-  const providerRowRefs = useRef<Map<string, HTMLButtonElement>>(new Map())
   const [menuOpen, setMenuOpen] = useState(false)
-  const [activeProviderId, setActiveProviderId] = useState<string | null>(null)
+  const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
   const [menuPlacement, setMenuPlacement] = useState<FloatingMenuPlacement | null>(null)
-  const [submenuPlacement, setSubmenuPlacement] = useState<FloatingSubmenuPlacement | null>(null)
   const modelOptions = useMemo(() => {
     const ordered = new Set<string>()
     for (const id of composerPickList) {
@@ -138,8 +123,6 @@ export function FloatingComposerModelPicker({
   const selectedProviderId = providerMenuGroups.find((group) =>
     group.modelIds.includes(currentModel)
   )?.providerId ?? null
-  const activeProviderGroup =
-    providerMenuGroups.find((group) => group.providerId === activeProviderId) ?? null
   const comboboxWidthClass = stretch
     ? 'min-w-0 flex-1 max-w-[284px]'
     : compact
@@ -153,7 +136,6 @@ export function FloatingComposerModelPicker({
       if (!(target instanceof Node)) return
       if (pickerRef.current?.contains(target)) return
       if (menuRef.current?.contains(target)) return
-      if (submenuRef.current?.contains(target)) return
       setMenuOpen(false)
     }
     window.addEventListener('pointerdown', onPointerDown)
@@ -163,7 +145,6 @@ export function FloatingComposerModelPicker({
   useEffect(() => {
     if (!menuOpen) {
       setMenuPlacement(null)
-      setSubmenuPlacement(null)
       return
     }
 
@@ -193,53 +174,16 @@ export function FloatingComposerModelPicker({
 
   useEffect(() => {
     if (!menuOpen) {
-      setActiveProviderId(null)
+      setExpandedProviderId(null)
       return
     }
-    if (providerMenuGroups.length === 0) {
-      setActiveProviderId(null)
-      return
-    }
-    setActiveProviderId((current) => {
-      if (current && providerMenuGroups.some((group) => group.providerId === current)) return current
-      return selectedProviderId ?? providerMenuGroups[0].providerId
-    })
-  }, [menuOpen, providerMenuGroups, selectedProviderId])
-
-  useEffect(() => {
-    if (!menuOpen || !activeProviderGroup) {
-      setSubmenuPlacement(null)
-      return
-    }
-
-    const updatePlacement = (): void => {
-      const row = providerRowRefs.current.get(activeProviderGroup.providerId)
-      if (!row) return
-
-      setSubmenuPlacement(
-        calculateFloatingSubmenuPlacement({
-          anchorRect: row.getBoundingClientRect(),
-          submenuHeight:
-            submenuRef.current?.offsetHeight
-            || estimatedModelSubmenuHeight(activeProviderGroup.modelIds.length),
-          viewportHeight: window.innerHeight,
-          viewportWidth: window.innerWidth,
-          coordinateScale: currentBodyZoom()
-        })
+    setExpandedProviderId((current) => {
+      return normalizeComposerProviderExpansion(
+        current,
+        providerMenuGroups.map((group) => group.providerId)
       )
-    }
-
-    updatePlacement()
-    const menu = menuRef.current
-    menu?.addEventListener('scroll', updatePlacement, true)
-    window.addEventListener('resize', updatePlacement)
-    window.addEventListener('scroll', updatePlacement, true)
-    return () => {
-      menu?.removeEventListener('scroll', updatePlacement, true)
-      window.removeEventListener('resize', updatePlacement)
-      window.removeEventListener('scroll', updatePlacement, true)
-    }
-  }, [activeProviderGroup, menuOpen])
+    })
+  }, [menuOpen, providerMenuGroups])
 
   const menuStyle: CSSProperties = menuPlacement
     ? {
@@ -253,21 +197,6 @@ export function FloatingComposerModelPicker({
         top: 0,
         width: `${FLOATING_MENU_WIDTH}px`,
         maxHeight: `${FLOATING_MENU_MAX_HEIGHT}px`,
-        visibility: 'hidden'
-      }
-
-  const submenuStyle: CSSProperties = submenuPlacement
-    ? {
-        left: `${submenuPlacement.left}px`,
-        top: `${submenuPlacement.top}px`,
-        width: `${submenuPlacement.width}px`,
-        maxHeight: `${submenuPlacement.maxHeight}px`
-      }
-    : {
-        left: 0,
-        top: 0,
-        width: `${FLOATING_SUBMENU_WIDTH}px`,
-        maxHeight: `${FLOATING_SUBMENU_MAX_HEIGHT}px`,
         visibility: 'hidden'
       }
 
@@ -314,48 +243,40 @@ export function FloatingComposerModelPicker({
           />
           {providerMenuGroups.map((group) => {
             const selectedModel = group.modelIds.includes(currentModel) ? currentModel : ''
+            const expanded = expandedProviderId === group.providerId
             return (
-              <ProviderRow
-                key={group.providerId}
-                refNode={(node) => {
-                  if (node) providerRowRefs.current.set(group.providerId, node)
-                  else providerRowRefs.current.delete(group.providerId)
-                }}
-                active={activeProviderId === group.providerId}
-                selected={selectedProviderId === group.providerId}
-                title={group.label}
-                subtitle={selectedModel}
-                onClick={() => setActiveProviderId(group.providerId)}
-                onMouseEnter={() => setActiveProviderId(group.providerId)}
-              />
+              <div key={group.providerId}>
+                <ProviderRow
+                  expanded={expanded}
+                  selected={selectedProviderId === group.providerId}
+                  title={group.label}
+                  subtitle={selectedModel}
+                  onClick={() => {
+                    setExpandedProviderId((current) =>
+                      toggleComposerProviderExpansion(current, group.providerId)
+                    )
+                  }}
+                />
+                {expanded ? (
+                  <div role="group" className="mb-1 ml-2 border-l border-ds-border-muted pl-1">
+                    {group.modelIds.map((id) => (
+                      <PickerRow
+                        key={`${group.providerId}:${id}`}
+                        selected={currentModel === id}
+                        title={id}
+                        onClick={() => {
+                          onComposerModelChange(id)
+                          setMenuOpen(false)
+                        }}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             )
           })}
         </div>
         </div>
-        {activeProviderGroup ? (
-          <div
-            ref={submenuRef}
-            role="menu"
-            aria-label={activeProviderGroup.label}
-            style={submenuStyle}
-            className="fixed z-[1001] overflow-y-auto rounded-xl border border-ds-border bg-white p-1.5 text-[13px] text-ds-muted shadow-[0_18px_48px_rgba(15,23,42,0.16)] dark:bg-ds-card"
-          >
-            <div className="px-2.5 pb-1 pt-1 text-[11px] font-bold uppercase tracking-[0.08em] text-ds-faint">
-              {activeProviderGroup.label}
-            </div>
-            {activeProviderGroup.modelIds.map((id) => (
-              <PickerRow
-                key={`${activeProviderGroup.providerId}:${id}`}
-                selected={currentModel === id}
-                title={id}
-                onClick={() => {
-                  onComposerModelChange(id)
-                  setMenuOpen(false)
-                }}
-              />
-            ))}
-          </div>
-        ) : null}
       </>
     )
 
@@ -518,60 +439,6 @@ export function calculateFloatingMenuPlacement({
   return { left, top, width, maxHeight }
 }
 
-export function calculateFloatingSubmenuPlacement({
-  anchorRect,
-  submenuHeight,
-  viewportHeight,
-  viewportWidth,
-  coordinateScale = 1
-}: {
-  anchorRect: FloatingSubmenuAnchorRect
-  submenuHeight: number
-  viewportHeight: number
-  viewportWidth: number
-  coordinateScale?: number
-}): FloatingSubmenuPlacement {
-  const scale = Number.isFinite(coordinateScale) && coordinateScale > 0 ? coordinateScale : 1
-  const normalizedAnchorRect = {
-    bottom: anchorRect.bottom / scale,
-    left: anchorRect.left / scale,
-    right: anchorRect.right / scale,
-    top: anchorRect.top / scale
-  }
-  const normalizedViewportHeight = viewportHeight / scale
-  const normalizedViewportWidth = viewportWidth / scale
-  const viewportMaxWidth = Math.max(
-    FLOATING_MENU_MIN_WIDTH,
-    normalizedViewportWidth - FLOATING_MENU_MARGIN * 2
-  )
-  const width = Math.min(FLOATING_SUBMENU_WIDTH, viewportMaxWidth)
-  const spaceRight = normalizedViewportWidth - normalizedAnchorRect.right - FLOATING_MENU_MARGIN
-  const spaceLeft = normalizedAnchorRect.left - FLOATING_MENU_MARGIN
-  const openRight = spaceRight >= width + FLOATING_SUBMENU_GAP || spaceRight >= spaceLeft
-  const preferredLeft = openRight
-    ? normalizedAnchorRect.right + FLOATING_SUBMENU_GAP
-    : normalizedAnchorRect.left - width - FLOATING_SUBMENU_GAP
-  const left = clamp(
-    preferredLeft,
-    FLOATING_MENU_MARGIN,
-    normalizedViewportWidth - FLOATING_MENU_MARGIN - width
-  )
-  const contentHeight = Math.max(submenuHeight, FLOATING_SUBMENU_MIN_HEIGHT)
-  const maxHeight = Math.min(
-    FLOATING_SUBMENU_MAX_HEIGHT,
-    Math.max(FLOATING_SUBMENU_MIN_HEIGHT, normalizedViewportHeight - FLOATING_MENU_MARGIN * 2)
-  )
-  const visibleHeight = Math.min(contentHeight, maxHeight)
-  const preferredTop = normalizedAnchorRect.top - 8
-  const top = clamp(
-    preferredTop,
-    FLOATING_MENU_MARGIN,
-    Math.max(FLOATING_MENU_MARGIN, normalizedViewportHeight - FLOATING_MENU_MARGIN - visibleHeight)
-  )
-
-  return { left, top, width, maxHeight }
-}
-
 function currentBodyZoom(): number {
   if (typeof window === 'undefined') return 1
   const zoom = window.getComputedStyle(document.body).zoom
@@ -593,8 +460,20 @@ function fullModelLabel(model: string, autoLabel: string): string {
   return trimmed
 }
 
-function estimatedModelSubmenuHeight(modelCount: number): number {
-  return 34 + Math.max(1, modelCount) * 36 + 12
+export function normalizeComposerProviderExpansion(
+  current: string | null,
+  providerIds: readonly string[]
+): string | null {
+  return current && providerIds.includes(current) ? current : null
+}
+
+export function toggleComposerProviderExpansion(
+  current: string | null,
+  providerId: string
+): string | null {
+  const normalizedProviderId = providerId.trim()
+  if (!normalizedProviderId) return null
+  return current === normalizedProviderId ? null : normalizedProviderId
 }
 
 function MenuSectionTitle({
@@ -647,35 +526,27 @@ function PickerRow({
 }
 
 function ProviderRow({
-  active,
+  expanded,
   selected,
   title,
   subtitle,
-  refNode,
-  onClick,
-  onMouseEnter
+  onClick
 }: {
-  active: boolean
+  expanded: boolean
   selected: boolean
   title: string
   subtitle: string
-  refNode: (node: HTMLButtonElement | null) => void
   onClick: () => void
-  onMouseEnter: () => void
 }): ReactElement {
   return (
     <button
-      ref={refNode}
       type="button"
       role="menuitem"
-      aria-haspopup="menu"
-      aria-expanded={active}
+      aria-expanded={expanded}
       onMouseDown={(event) => event.preventDefault()}
-      onMouseEnter={onMouseEnter}
-      onFocus={onMouseEnter}
       onClick={onClick}
       className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition ${
-        active
+        expanded
           ? 'bg-ds-hover text-ds-ink'
           : selected
             ? 'text-ds-ink hover:bg-ds-hover'
@@ -688,7 +559,11 @@ function ProviderRow({
           <span className="block truncate text-[11.5px] font-medium text-ds-faint">{subtitle}</span>
         ) : null}
       </span>
-      <ChevronRight className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
+      {expanded ? (
+        <ChevronDown className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
+      ) : (
+        <ChevronRight className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.8} />
+      )}
     </button>
   )
 }
