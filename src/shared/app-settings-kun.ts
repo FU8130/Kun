@@ -496,7 +496,8 @@ export function migrateLegacyAppSettings(parsed: LegacyAppSettingsShape): Partia
       : nonEmptyStringOrFallback(explicitKun.apiKey, legacySeed.apiKey),
     baseUrl: hasProviderSettings
       ? parsed.provider?.baseUrl
-      : nonEmptyStringOrFallback(explicitKun.baseUrl, legacySeed.baseUrl)
+      : nonEmptyStringOrFallback(explicitKun.baseUrl, legacySeed.baseUrl),
+    providers: parsed.provider?.providers
   })
   const kun = {
     ...kunDefaults,
