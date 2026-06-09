@@ -194,6 +194,37 @@ describe('DeepseekCompatModelClient', () => {
     })
   })
 
+  it('requests usage in streaming responses', async () => {
+    const sentBodies: Array<Record<string, unknown>> = []
+    const encoder = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      }
+    })
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      sentBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    }
+    const client = new DeepseekCompatModelClient({
+      baseUrl: 'https://example.com/beta',
+      apiKey: 'k',
+      model: 'deepseek-chat',
+      fetchImpl
+    })
+
+    for await (const _chunk of client.stream(buildRequest(new AbortController().signal))) {
+      // drain
+    }
+
+    expect(sentBodies[0]).toMatchObject({
+      stream: true,
+      stream_options: { include_usage: true }
+    })
+  })
+
   it('keeps requiredToolName as loop metadata instead of sending provider tool_choice', async () => {
     const response = {
       id: 'required-tool-metadata',
@@ -1169,6 +1200,84 @@ describe('DeepseekCompatModelClient', () => {
     expect(complete && complete.kind === 'tool_call_complete' ? complete.callId : '').toBe('call_1')
     expect(complete && complete.kind === 'tool_call_complete' ? complete.arguments : {}).toEqual({ text: 'hi' })
     expect(chunks.find((c) => c.kind === 'usage')).toBeDefined()
+  })
+
+  it('keeps reading streamed usage sent after finish_reason', async () => {
+    const frames = [
+      'data: {"choices":[{"delta":{"content":"done"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}\n\n',
+      'data: [DONE]\n\n'
+    ]
+    const encoder = new TextEncoder()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const frame of frames) controller.enqueue(encoder.encode(frame))
+        controller.close()
+      }
+    })
+    const fetchImpl: typeof fetch = async () =>
+      new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    const client = new DeepseekCompatModelClient({
+      baseUrl: 'https://example.com/beta',
+      apiKey: 'k',
+      model: 'deepseek-chat',
+      fetchImpl
+    })
+    const chunks = []
+    for await (const chunk of client.stream(buildRequest(new AbortController().signal))) {
+      chunks.push(chunk)
+    }
+
+    const usage = chunks.find((c) => c.kind === 'usage')
+    const completed = chunks.find((c) => c.kind === 'completed')
+    expect(usage && usage.kind === 'usage' ? usage.usage.totalTokens : 0).toBe(10)
+    expect(completed && completed.kind === 'completed' ? completed.stopReason : '').toBe('stop')
+  })
+
+  it('retries without stream usage options when a provider rejects them', async () => {
+    const sentBodies: Array<Record<string, unknown>> = []
+    const encoder = new TextEncoder()
+    const retryBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"retried"}}]}\n\n'))
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}\n\n'
+          )
+        )
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      }
+    })
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      sentBodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
+      if (sentBodies.length === 1) {
+        return new Response('unknown field stream_options.include_usage', { status: 400 })
+      }
+      return new Response(retryBody, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    }
+    const client = new DeepseekCompatModelClient({
+      baseUrl: 'https://example.com/beta',
+      apiKey: 'k',
+      model: 'deepseek-chat',
+      fetchImpl
+    })
+    const chunks = []
+    for await (const chunk of client.stream(buildRequest(new AbortController().signal))) {
+      chunks.push(chunk)
+    }
+
+    const text = chunks
+      .filter((c) => c.kind === 'assistant_text_delta')
+      .map((c) => (c as { text: string }).text)
+      .join('')
+    const usage = chunks.find((c) => c.kind === 'usage')
+    expect(sentBodies).toHaveLength(2)
+    expect(sentBodies[0]).toHaveProperty('stream_options')
+    expect(sentBodies[1]).not.toHaveProperty('stream_options')
+    expect(text).toBe('retried')
+    expect(usage && usage.kind === 'usage' ? usage.usage.totalTokens : 0).toBe(7)
   })
 
   it('merges streamed tool-call deltas by index when the provider id arrives later', async () => {

@@ -123,22 +123,44 @@ export class DeepseekCompatModelClient implements ModelClient {
     const stream = request.stream ?? !this.config.nonStreaming
     const body = this.buildRequestBody(request, stream)
     const headers = this.buildHeaders(stream)
-    const init: RequestInit = {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: request.abortSignal
-    }
-    let response: Response
-    try {
-      response = await this.fetchImpl(url, init)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      yield { kind: 'error', message: `model request failed: ${message}` }
+    const result = await this.postChatCompletion(url, headers, body, request.abortSignal)
+    if (result.kind === 'error') {
+      yield { kind: 'error', message: result.message }
       return
     }
+    let response = result.response
     if (!response.ok) {
       const text = await response.text()
+      if (shouldRetryWithoutStreamUsage(response.status, text, body)) {
+        const retryBody = this.buildRequestBody(request, stream, { includeStreamUsage: false })
+        const retry = await this.postChatCompletion(url, headers, retryBody, request.abortSignal)
+        if (retry.kind === 'error') {
+          yield { kind: 'error', message: retry.message }
+          return
+        }
+        response = retry.response
+        if (response.ok) {
+          if (this.config.nonStreaming || response.headers.get('content-type')?.includes('application/json')) {
+            const json = (await response.json()) as ChatCompletionResponse
+            yield* this.materializeNonStreaming(json)
+            return
+          }
+          if (!response.body) {
+            yield { kind: 'error', message: 'model response had no body' }
+            return
+          }
+          yield* this.streamSse(response.body, request.abortSignal)
+          return
+        }
+        const retryText = await response.text()
+        const retryClassified = await this.classifyHttpError(response.status, retryText)
+        yield {
+          kind: 'error',
+          message: retryClassified.message,
+          code: retryClassified.code
+        }
+        return
+      }
       const classified = await this.classifyHttpError(response.status, text)
       yield {
         kind: 'error',
@@ -157,6 +179,26 @@ export class DeepseekCompatModelClient implements ModelClient {
       return
     }
     yield* this.streamSse(response.body, request.abortSignal)
+  }
+
+  private async postChatCompletion(
+    url: string,
+    headers: Record<string, string>,
+    body: Record<string, unknown>,
+    signal: AbortSignal
+  ): Promise<{ kind: 'response'; response: Response } | { kind: 'error'; message: string }> {
+    try {
+      const response = await this.fetchImpl(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal
+      })
+      return { kind: 'response', response }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return { kind: 'error', message: `model request failed: ${message}` }
+    }
   }
 
   private buildUrl(path: string): string {
@@ -199,7 +241,11 @@ export class DeepseekCompatModelClient implements ModelClient {
     }
   }
 
-  private buildRequestBody(request: ModelRequest, stream: boolean): Record<string, unknown> {
+  private buildRequestBody(
+    request: ModelRequest,
+    stream: boolean,
+    options: { includeStreamUsage?: boolean } = {}
+  ): Record<string, unknown> {
     const requestModel = request.model?.trim()
     const model = requestModel || this.config.model
     const messages = this.collectMessages(request, model)
@@ -219,6 +265,9 @@ export class DeepseekCompatModelClient implements ModelClient {
     }
     if (request.responseFormat === 'json_object') {
       body.response_format = { type: 'json_object' }
+    }
+    if (stream && options.includeStreamUsage !== false) {
+      body.stream_options = { include_usage: true }
     }
     const includeThinking = !isAzureOpenAiEndpoint(this.config.baseUrl)
     applyReasoningEffort(body, request.reasoningEffort, { includeThinking })
@@ -446,6 +495,7 @@ export class DeepseekCompatModelClient implements ModelClient {
     let reasoningAccumulator = ''
     let stopReason: ModelStopReason = 'stop'
     let finishReason: string | null = null
+    let sawDone = false
     const idleTimeoutMs = normalizeStreamIdleTimeoutMs(this.config.streamIdleTimeoutMs)
     try {
       while (!signal.aborted) {
@@ -478,6 +528,7 @@ export class DeepseekCompatModelClient implements ModelClient {
           if (!dataLines) continue
           if (dataLines === '[DONE]') {
             finishReason = finishReason ?? 'stop'
+            sawDone = true
             break
           }
           let payload: unknown
@@ -498,7 +549,7 @@ export class DeepseekCompatModelClient implements ModelClient {
           if (result.finishReason) finishReason = result.finishReason
           for (const chunk of result.chunks) yield chunk
         }
-        if (finishReason === 'stop' || finishReason === 'tool_calls' || finishReason === 'length') break
+        if (sawDone) break
       }
     } finally {
       try {
@@ -739,6 +790,16 @@ function applyReasoningEffort(
       if (includeThinking) body.thinking = { type: 'enabled' }
       break
   }
+}
+
+function shouldRetryWithoutStreamUsage(
+  status: number,
+  text: string,
+  body: Record<string, unknown>
+): boolean {
+  if (status !== 400 && status !== 422) return false
+  if (!Object.prototype.hasOwnProperty.call(body, 'stream_options')) return false
+  return /\b(stream_options|include_usage)\b/i.test(text)
 }
 
 function isAzureOpenAiEndpoint(baseUrl: string): boolean {
