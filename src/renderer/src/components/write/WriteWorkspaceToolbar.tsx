@@ -233,7 +233,7 @@ export function WriteWorkspaceToolbar({
             ) : null}
           </div>
 
-          <div className="write-workspace-toolbar-actions flex min-w-0 items-center justify-start gap-1.5">
+          <div className="write-workspace-toolbar-actions flex min-w-0 items-center justify-end gap-1.5">
             <button
               type="button"
               onClick={() => setAssistantOpen(!assistantOpen)}
@@ -243,6 +243,29 @@ export function WriteWorkspaceToolbar({
             >
               <Sparkles className="h-4 w-4" strokeWidth={1.85} />
             </button>
+            <button
+              type="button"
+              onClick={onSave}
+              disabled={!activeFilePath || !activeFileIsText || readOnly}
+              className={`${toolbarIconButtonClass()} disabled:cursor-not-allowed disabled:opacity-40`}
+              title={activeFileIsPdf ? t('writePdfSaveDisabled') : activeFileIsImage ? t('writeImageSaveDisabled') : readOnly ? t('writeReadOnlySaveDisabled') : t('writeSaveFile')}
+              aria-label={activeFileIsPdf ? t('writePdfSaveDisabled') : activeFileIsImage ? t('writeImageSaveDisabled') : readOnly ? t('writeReadOnlySaveDisabled') : t('writeSaveFile')}
+            >
+              <Save className="h-4 w-4" strokeWidth={1.85} />
+            </button>
+            <span className={`ml-1 inline-flex min-w-[64px] justify-center rounded-lg px-2.5 py-1 text-[11.5px] font-semibold ${
+              readOnly
+                ? 'bg-slate-500/12 text-slate-700 dark:text-slate-300'
+                : saveStatus === 'error'
+                ? 'bg-red-500/12 text-red-600 dark:text-red-300'
+                : saveStatus === 'dirty'
+                  ? 'bg-amber-500/12 text-amber-700 dark:text-amber-300'
+                  : saveStatus === 'saving'
+                    ? 'bg-sky-500/12 text-sky-700 dark:text-sky-300'
+                    : 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-300'
+            }`}>
+              {saveLabel}
+            </span>
             <div ref={exportMenuRef} className="relative">
               <button
                 type="button"
@@ -265,7 +288,7 @@ export function WriteWorkspaceToolbar({
               {exportMenuOpen ? (
                 <div
                   role="menu"
-                  className="absolute right-0 top-full z-30 mt-2 w-52 overflow-hidden rounded-2xl border border-ds-border bg-ds-card/95 p-1.5 shadow-[0_22px_48px_rgba(20,47,95,0.16)] backdrop-blur-xl"
+                  className="absolute right-0 top-full z-30 mt-2 w-52 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-ds-border bg-ds-card/95 p-1.5 shadow-[0_22px_48px_rgba(20,47,95,0.16)] backdrop-blur-xl"
                 >
                   <button
                     type="button"
@@ -294,29 +317,6 @@ export function WriteWorkspaceToolbar({
                 </div>
               ) : null}
             </div>
-            <button
-              type="button"
-              onClick={onSave}
-              disabled={!activeFilePath || !activeFileIsText || readOnly}
-              className={`${toolbarIconButtonClass()} disabled:cursor-not-allowed disabled:opacity-40`}
-              title={activeFileIsPdf ? t('writePdfSaveDisabled') : activeFileIsImage ? t('writeImageSaveDisabled') : readOnly ? t('writeReadOnlySaveDisabled') : t('writeSaveFile')}
-              aria-label={activeFileIsPdf ? t('writePdfSaveDisabled') : activeFileIsImage ? t('writeImageSaveDisabled') : readOnly ? t('writeReadOnlySaveDisabled') : t('writeSaveFile')}
-            >
-              <Save className="h-4 w-4" strokeWidth={1.85} />
-            </button>
-            <span className={`ml-1 inline-flex min-w-[64px] justify-center rounded-lg px-2.5 py-1 text-[11.5px] font-semibold ${
-              readOnly
-                ? 'bg-slate-500/12 text-slate-700 dark:text-slate-300'
-                : saveStatus === 'error'
-                ? 'bg-red-500/12 text-red-600 dark:text-red-300'
-                : saveStatus === 'dirty'
-                  ? 'bg-amber-500/12 text-amber-700 dark:text-amber-300'
-                  : saveStatus === 'saving'
-                    ? 'bg-sky-500/12 text-sky-700 dark:text-sky-300'
-                    : 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-300'
-            }`}>
-              {saveLabel}
-            </span>
           </div>
         </div>
       </header>
