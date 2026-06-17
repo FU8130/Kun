@@ -2215,12 +2215,16 @@ export function FloatingComposer({
                         </span>
                       </>
                     ) : null}
-                    <span className="ds-composer-usage-cache-separator text-ds-faint">·</span>
-                    <span className="ds-composer-usage-cache shrink-0 truncate tabular-nums">
-                      {t('sessionUsageCache', {
-                        cache: formatPercent(primaryCacheHitRate(threadUsage))
-                      })}
-                    </span>
+                    {threadUsage.turns > 1 ? (
+                      <>
+                        <span className="ds-composer-usage-cache-separator text-ds-faint">·</span>
+                        <span className="ds-composer-usage-cache shrink-0 truncate tabular-nums">
+                          {t('sessionUsageCache', {
+                            cache: formatPercent(primaryCacheHitRate(threadUsage))
+                          })}
+                        </span>
+                      </>
+                    ) : null}
                     <span className="ds-composer-usage-turns-separator text-ds-faint">·</span>
                     <span className="ds-composer-usage-turns shrink-0 truncate tabular-nums">
                       {t('sessionUsageTurns', { turns: threadUsage.turns })}
