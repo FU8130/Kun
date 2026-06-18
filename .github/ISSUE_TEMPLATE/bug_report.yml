@@ -80,7 +80,18 @@ body:
     id: logs
     attributes:
       label: Logs / 日志
-      description: Paste relevant logs or stack traces here. Do not paste screenshots in this field; screenshots should go in Actual behavior so they render as images. / 请在这里粘贴相关日志或堆栈信息。不要在这里粘贴截图；截图请放到“实际行为”中，这样才能正常渲染为图片。
+      description: |
+        Paste relevant logs or stack traces here. Do not paste screenshots in this field; screenshots should go in Actual behavior so they render as images.
+
+        You can find Kun logs in:
+
+        - macOS: `~/Library/Application Support/Kun/logs`
+        - Windows: `C:\Users\<YourUserName>\AppData\Roaming\Kun\logs`
+        - Linux: `~/.config/Kun/logs`
+
+        If you changed the default Linux config directory, check `<your config directory>/Kun/logs` instead.
+
+        Please attach the latest `kun-YYYY-MM-DD.log` file. If you upgraded from an older DeepSeek GUI version, also attach the latest `deepseek-gui-YYYY-MM-DD.log` file if it exists.
       render: shell
   - type: checkboxes
     id: terms
