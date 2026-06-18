@@ -69,6 +69,7 @@
     "node-pty": "^1.1.0",
     "openclaw": "file:vendor/openclaw-shim",
     "pdfjs-dist": "^5.4.394",
+    "proxy-agent": "^8.0.2",
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

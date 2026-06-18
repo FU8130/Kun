@@ -1,10 +1,13 @@
 import {
   isCustomModelEndpointFormat,
   normalizeModelEndpointFormat,
+  resolveModelProviderProxyUrl,
+  type AppSettingsV1,
   type ModelEndpointFormat
 } from '../shared/app-settings'
 import type { ModelProviderProbeRequest, ModelProviderProbeResult } from '../shared/kun-gui-api'
 import { upstreamOpenAiModelsUrl } from '../shared/openai-compat-url'
+import { fetchWithOptionalProxy } from './proxy-fetch'
 
 const PROBE_TIMEOUT_MS = 10_000
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -29,7 +32,8 @@ export function providerProbeHeaders(
  * process so the API key never leaves it and renderer CORS does not apply.
  */
 export async function probeModelProvider(
-  request: ModelProviderProbeRequest
+  request: ModelProviderProbeRequest,
+  settings?: AppSettingsV1
 ): Promise<ModelProviderProbeResult> {
   const baseUrl = request.baseUrl.trim()
   if (!/^https?:\/\//i.test(baseUrl)) {
@@ -47,11 +51,11 @@ export async function probeModelProvider(
   let res: Response
   let text: string
   try {
-    res = await fetch(url, {
+    res = await fetchWithOptionalProxy(url, {
       method: 'GET',
       headers: providerProbeHeaders(endpointFormat, request.apiKey),
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)
-    })
+    }, settings ? resolveModelProviderProxyUrl(settings) : '')
     text = await res.text()
   } catch (e) {
     const message = e instanceof Error && e.name === 'TimeoutError'

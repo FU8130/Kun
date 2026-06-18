@@ -253,6 +253,10 @@ const modelProfilePatchSchema = z.object({
 const modelProviderPatchSchema = z.object({
   apiKey: z.string().max(MAX_BODY_BYTES).optional(),
   baseUrl: z.string().trim().max(MAX_URL_LENGTH).optional(),
+  proxy: z.object({
+    enabled: z.boolean().optional(),
+    url: z.string().trim().max(MAX_URL_LENGTH).optional()
+  }).strict().optional(),
   providers: z.array(z.object({
     id: z.string().trim().min(1).max(64).optional(),
     name: z.string().trim().min(1).max(80).optional(),

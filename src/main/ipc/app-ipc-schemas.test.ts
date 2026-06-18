@@ -401,6 +401,22 @@ describe('app-ipc-schemas', () => {
     })
   })
 
+  it('accepts model proxy settings in provider patches', () => {
+    const payload = settingsPatchSchema.parse({
+      provider: {
+        proxy: {
+          enabled: true,
+          url: 'socks5://127.0.0.1:1080'
+        }
+      }
+    })
+
+    expect(payload.provider?.proxy).toEqual({
+      enabled: true,
+      url: 'socks5://127.0.0.1:1080'
+    })
+  })
+
   it('accepts partial keyboard shortcut binding maps in settings patches', () => {
     const payload = settingsPatchSchema.parse({
       keyboardShortcuts: {

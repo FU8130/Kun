@@ -83,6 +83,7 @@ export type KunServeRuntimeOptions = {
   runtimeToken: string
   apiKey: string
   baseUrl: string
+  modelProxyUrl?: string
   endpointFormat?: ModelEndpointFormat
   model: string
   approvalPolicy: ApprovalPolicy
@@ -156,6 +157,7 @@ export async function createKunServeRuntime(
   const modelClient = new CompatModelClient({
     baseUrl: options.baseUrl,
     apiKey: options.apiKey,
+    modelProxyUrl: options.modelProxyUrl,
     endpointFormat: options.endpointFormat ?? DEFAULT_MODEL_ENDPOINT_FORMAT,
     model: options.model,
     modelCapabilities,

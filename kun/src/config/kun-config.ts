@@ -207,6 +207,7 @@ export const KunServeConfigSchema = z
     runtimeToken: z.string().optional(),
     apiKey: z.string().optional(),
     baseUrl: z.string().optional(),
+    modelProxyUrl: z.string().optional(),
     endpointFormat: z.preprocess(
       normalizeModelEndpointFormat,
       z.enum(MODEL_ENDPOINT_FORMATS)

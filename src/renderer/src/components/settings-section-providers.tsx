@@ -124,6 +124,7 @@ export function modelProvidersSettingsPatch(input: {
     provider: {
       apiKey: defaultProvider?.apiKey ?? input.provider.apiKey,
       baseUrl: defaultProvider?.baseUrl ?? input.provider.baseUrl,
+      proxy: input.provider.proxy,
       providers: input.providers
     },
     ...(Object.keys(kunPatch).length > 0 ? { agents: { kun: kunPatch } } : {})
@@ -509,6 +510,18 @@ export function ProvidersSettingsSection({ ctx }: { ctx: Record<string, any> }):
     !tokenPlanPresetForProfileId(activeProvider.id)
   )
   const activeKunProviderId: string = kun.providerId?.trim() || DEFAULT_MODEL_PROVIDER_ID
+  const providerProxy = provider.proxy ?? { enabled: false, url: '' }
+
+  const updateProviderProxy = (patch: Partial<typeof providerProxy>): void => {
+    update({
+      provider: {
+        proxy: {
+          ...providerProxy,
+          ...patch
+        }
+      }
+    })
+  }
 
   const confirmAction = async (options: {
     message: string
@@ -1105,6 +1118,28 @@ export function ProvidersSettingsSection({ ctx }: { ctx: Record<string, any> }):
   return (
     <>
     <SettingsCard title={t('providers')}>
+      <SettingRow
+        title={t('proxyUrl')}
+        description={t('proxyUrlDesc')}
+        control={
+          <div className="flex w-full min-w-0 flex-col gap-2 md:max-w-md">
+            <label className="flex items-center justify-between gap-3 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm">
+              <span>{t('proxyEnabled')}</span>
+              <Toggle
+                checked={providerProxy.enabled === true}
+                onChange={(enabled) => updateProviderProxy({ enabled })}
+              />
+            </label>
+            <input
+              className={textInputClass}
+              placeholder={t('proxyUrlPlaceholder')}
+              value={providerProxy.url}
+              spellCheck={false}
+              onChange={(e) => updateProviderProxy({ url: e.target.value })}
+            />
+          </div>
+        }
+      />
       <SettingRow
         title={t('providers')}
         description={t('providersDesc')}

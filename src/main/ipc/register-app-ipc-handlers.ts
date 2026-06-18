@@ -464,7 +464,7 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
 
   ipcMain.handle('provider:probe', async (_, payload: unknown) => {
     const request = parseIpcPayload('provider:probe', providerProbePayloadSchema, payload)
-    return probeModelProvider(request)
+    return probeModelProvider(request, await store.load())
   })
 
   ipcMain.handle('claw:status', async (): Promise<ClawRuntimeStatus> =>

@@ -77,6 +77,12 @@ export const DEFAULT_WRITE_INLINE_LONG_COMPLETION_MAX_TOKENS = 256
 export const DEFAULT_KUN_PORT = 8899
 export const DEFAULT_WEIXIN_BRIDGE_RPC_URL = 'http://127.0.0.1:18790/api/v1/admin/rpc'
 export const DEFAULT_MODEL_PROVIDER_ID = 'deepseek'
+export const NETWORK_PROXY_PROTOCOLS = ['http', 'https', 'socks', 'socks4', 'socks4a', 'socks5', 'socks5h'] as const
+export type NetworkProxyProtocol = (typeof NETWORK_PROXY_PROTOCOLS)[number]
+export type NetworkProxySettingsV1 = {
+  enabled: boolean
+  url: string
+}
 export type { ModelEndpointFormat }
 export const MODEL_PROVIDER_INPUT_MODALITIES = ['text', 'image'] as const
 export type ModelProviderInputModality = (typeof MODEL_PROVIDER_INPUT_MODALITIES)[number]
@@ -151,6 +157,7 @@ export type ModelProviderProfileV1 = {
 export type ModelProviderSettingsV1 = {
   apiKey: string
   baseUrl: string
+  proxy: NetworkProxySettingsV1
   providers: ModelProviderProfileV1[]
 }
 
@@ -169,8 +176,9 @@ export type ModelProviderProfilePatchV1 = Partial<Omit<ModelProviderProfileV1, '
   video?: ModelProviderVideoCapabilityPatchV1 | null
 }
 export type ModelProviderSettingsPatchV1 = Partial<
-  Omit<ModelProviderSettingsV1, 'providers'>
+  Omit<ModelProviderSettingsV1, 'providers' | 'proxy'>
 > & {
+  proxy?: Partial<NetworkProxySettingsV1>
   providers?: ModelProviderProfilePatchV1[]
 }
 

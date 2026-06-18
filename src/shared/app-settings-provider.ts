@@ -4,6 +4,7 @@ import {
   DEFAULT_MUSIC_GENERATION_PROTOCOL,
   DEFAULT_MODEL_ENDPOINT_FORMAT,
   DEFAULT_MODEL_PROVIDER_ID,
+  NETWORK_PROXY_PROTOCOLS,
   DEFAULT_SPEECH_TO_TEXT_PROTOCOL,
   DEFAULT_TEXT_TO_SPEECH_PROTOCOL,
   DEFAULT_VIDEO_GENERATION_PROTOCOL,
@@ -37,6 +38,7 @@ import {
   type ModelProviderProfileV1,
   type ModelProviderSettingsPatchV1,
   type ModelProviderSettingsV1,
+  type NetworkProxySettingsV1,
   type ModelProviderSpeechCapabilityPatchV1,
   type ModelProviderSpeechCapabilityV1,
   type ModelProviderTextToSpeechCapabilityPatchV1,
@@ -87,6 +89,7 @@ export function defaultModelProviderSettings(): ModelProviderSettingsV1 {
   return {
     apiKey: defaultProvider.apiKey,
     baseUrl: defaultProvider.baseUrl,
+    proxy: defaultNetworkProxySettings(),
     providers: [defaultProvider]
   }
 }
@@ -121,6 +124,7 @@ export function normalizeModelProviderSettings(
   return {
     apiKey,
     baseUrl,
+    proxy: normalizeNetworkProxySettings(input?.proxy),
     providers
   }
 }
@@ -151,6 +155,11 @@ export function resolveModelProviderApiKey(settings: AppSettingsV1): string {
 
 export function resolveModelProviderBaseUrl(settings: AppSettingsV1): string {
   return normalizeDeepseekBaseUrl(getDefaultModelProviderProfile(settings).baseUrl)
+}
+
+export function resolveModelProviderProxyUrl(settings: AppSettingsV1): string {
+  const proxy = getModelProviderSettings(settings).proxy
+  return proxy.enabled ? proxy.url.trim() : ''
 }
 
 export function getDefaultModelProviderProfile(settings: AppSettingsV1): ModelProviderProfileV1 {
@@ -1214,6 +1223,37 @@ export function normalizeModelProviderId(value: unknown): string {
   return typeof value === 'string'
     ? value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
     : ''
+}
+
+export function defaultNetworkProxySettings(): NetworkProxySettingsV1 {
+  return {
+    enabled: false,
+    url: ''
+  }
+}
+
+export function normalizeNetworkProxySettings(
+  input: Partial<NetworkProxySettingsV1> | undefined
+): NetworkProxySettingsV1 {
+  const url = normalizeProxyUrl(input?.url)
+  return {
+    enabled: input?.enabled === true && Boolean(url),
+    url
+  }
+}
+
+export function normalizeProxyUrl(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (!raw) return ''
+  try {
+    const parsed = new URL(raw)
+    const protocol = parsed.protocol.replace(/:$/, '').toLowerCase()
+    if (!NETWORK_PROXY_PROTOCOLS.includes(protocol as typeof NETWORK_PROXY_PROTOCOLS[number])) return ''
+    if (!parsed.hostname || !parsed.port) return ''
+    return parsed.toString()
+  } catch {
+    return ''
+  }
 }
 
 function normalizeModelKey(value: unknown): string {

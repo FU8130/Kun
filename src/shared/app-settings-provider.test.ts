@@ -28,6 +28,7 @@ import {
   resolveKunImageGenerationSettings,
   resolveKunMusicGenerationSettings,
   resolveModelProviderBaseUrl,
+  resolveModelProviderProxyUrl,
   resolveKunRuntimeSettings,
   resolveKunSpeechToTextSettings,
   resolveKunTextToSpeechSettings,
@@ -87,6 +88,38 @@ describe('model provider settings', () => {
     expect(runtime.apiKey).toBe('sk-custom')
     expect(runtime.baseUrl).toBe('https://custom.example/v1')
     expect(runtime.endpointFormat).toBe('messages')
+  })
+
+  it('normalizes and resolves model request proxy settings', () => {
+    const provider = normalizeModelProviderSettings({
+      proxy: {
+        enabled: true,
+        url: ' socks5://127.0.0.1:1080 '
+      }
+    })
+
+    expect(provider.proxy).toEqual({
+      enabled: true,
+      url: 'socks5://127.0.0.1:1080'
+    })
+
+    const state = settings()
+    state.provider.proxy = provider.proxy
+    expect(resolveModelProviderProxyUrl(state)).toBe('socks5://127.0.0.1:1080')
+  })
+
+  it('disables invalid model request proxy URLs', () => {
+    const provider = normalizeModelProviderSettings({
+      proxy: {
+        enabled: true,
+        url: 'ftp://127.0.0.1:2121'
+      }
+    })
+
+    expect(provider.proxy).toEqual({
+      enabled: false,
+      url: ''
+    })
   })
 
   it('keeps legacy Kun runtime credential overrides only when no provider is selected', () => {
