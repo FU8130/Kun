@@ -3,10 +3,12 @@ import { createContext, useContext } from 'react'
 import { Handle, NodeToolbar, Position, type NodeProps, type NodeTypes } from '@xyflow/react'
 import { useTranslation } from 'react-i18next'
 import {
+  ArrowDownUp,
   Braces,
   Brain,
   CalendarClock,
   Code2,
+  Filter,
   GitBranch,
   GitMerge,
   Globe,
@@ -15,6 +17,8 @@ import {
   Play,
   Power,
   Repeat,
+  Scissors,
+  Sigma,
   Split,
   Timer,
   Trash2,
@@ -23,6 +27,7 @@ import {
   type LucideIcon
 } from 'lucide-react'
 import type { WorkflowNodeKind, WorkflowNodeRunStatus, WorkflowNodeV1 } from '@shared/app-settings'
+import { WORKFLOW_NODE_KINDS } from '@shared/app-settings'
 import type { WorkflowFlowNodeData } from './workflow-types'
 
 /** workflowId-scoped live node status, provided by the editor and read by each node. */
@@ -48,8 +53,12 @@ export const NODE_ICONS: Record<WorkflowNodeKind, LucideIcon> = {
   'generate-image': ImagePlus,
   condition: GitBranch,
   switch: Split,
+  filter: Filter,
   'set-fields': Braces,
   code: Code2,
+  sort: ArrowDownUp,
+  limit: Scissors,
+  aggregate: Sigma,
   'http-request': Globe,
   merge: GitMerge,
   subworkflow: Workflow,
@@ -92,10 +101,18 @@ function nodeSummary(node: WorkflowNodeV1): string {
       return `${node.config.leftExpr || 'text'} ${node.config.operator} ${node.config.rightValue}`.trim()
     case 'switch':
       return `${node.config.rules.length} rules${node.config.fallback ? ' + fallback' : ''}`
+    case 'filter':
+      return `${node.config.leftExpr || 'text'} ${node.config.operator} ${node.config.rightValue}`.trim()
     case 'set-fields':
       return node.config.fields.map((field) => field.key).filter(Boolean).join(', ')
     case 'code':
       return 'JS'
+    case 'sort':
+      return `${node.config.field || 'item'} ${node.config.order}`
+    case 'limit':
+      return `${node.config.from} ${node.config.count}`
+    case 'aggregate':
+      return node.config.field ? `${node.config.mode}(${node.config.field})` : node.config.mode
     case 'http-request':
       return `${node.config.method} ${node.config.url}`.trim()
     case 'merge':
@@ -225,12 +242,9 @@ function WorkflowCanvasNode({ id, data, selected }: NodeProps): ReactElement {
 
 const sharedNode = WorkflowCanvasNode as ComponentType<NodeProps>
 
-export const workflowNodeTypes: NodeTypes = {
-  'manual-trigger': sharedNode,
-  'schedule-trigger': sharedNode,
-  'ai-agent': sharedNode,
-  condition: sharedNode,
-  'set-fields': sharedNode,
-  'http-request': sharedNode,
-  delay: sharedNode
-}
+// Every kind renders through the same shell; derive the map from the canonical
+// kind list so a newly added node type can never silently fall back to React
+// Flow's default (unstyled) node renderer.
+export const workflowNodeTypes: NodeTypes = Object.fromEntries(
+  WORKFLOW_NODE_KINDS.map((kind) => [kind, sharedNode])
+)

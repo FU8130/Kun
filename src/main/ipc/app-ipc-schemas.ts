@@ -804,6 +804,35 @@ const workflowCodeConfigSchema = z.object({ code: z.string().max(MAX_BODY_BYTES)
 
 const workflowMergeConfigSchema = z.object({ mode: z.enum(['array', 'object']).optional() }).strict()
 
+const workflowFilterConfigSchema = z
+  .object({
+    leftExpr: z.string().max(2_000).optional(),
+    operator: workflowConditionOperatorSchema.optional(),
+    rightValue: z.string().max(4_000).optional(),
+    caseSensitive: z.boolean().optional()
+  })
+  .strict()
+
+const workflowSortConfigSchema = z
+  .object({
+    field: z.string().max(256).optional(),
+    order: z.enum(['asc', 'desc']).optional(),
+    numeric: z.boolean().optional()
+  })
+  .strict()
+
+const workflowLimitConfigSchema = z
+  .object({ count: z.number().int().min(1).max(100_000).optional(), from: z.enum(['first', 'last']).optional() })
+  .strict()
+
+const workflowAggregateConfigSchema = z
+  .object({
+    mode: z.enum(['count', 'sum', 'collect', 'join']).optional(),
+    field: z.string().max(256).optional(),
+    separator: z.string().max(32).optional()
+  })
+  .strict()
+
 const workflowSubWorkflowConfigSchema = z
   .object({ workflowId: z.string().max(MAX_ID_LENGTH).optional() })
   .strict()
@@ -853,8 +882,12 @@ const workflowNodePatchSchema = z.discriminatedUnion('type', [
   z.object({ ...workflowNodeBaseShape, type: z.literal('generate-image'), config: workflowGenerateImageConfigSchema.optional() }).strict(),
   z.object({ ...workflowNodeBaseShape, type: z.literal('condition'), config: workflowConditionConfigSchema.optional() }).strict(),
   z.object({ ...workflowNodeBaseShape, type: z.literal('switch'), config: workflowSwitchConfigSchema.optional() }).strict(),
+  z.object({ ...workflowNodeBaseShape, type: z.literal('filter'), config: workflowFilterConfigSchema.optional() }).strict(),
   z.object({ ...workflowNodeBaseShape, type: z.literal('set-fields'), config: workflowSetFieldsConfigSchema.optional() }).strict(),
   z.object({ ...workflowNodeBaseShape, type: z.literal('code'), config: workflowCodeConfigSchema.optional() }).strict(),
+  z.object({ ...workflowNodeBaseShape, type: z.literal('sort'), config: workflowSortConfigSchema.optional() }).strict(),
+  z.object({ ...workflowNodeBaseShape, type: z.literal('limit'), config: workflowLimitConfigSchema.optional() }).strict(),
+  z.object({ ...workflowNodeBaseShape, type: z.literal('aggregate'), config: workflowAggregateConfigSchema.optional() }).strict(),
   z.object({ ...workflowNodeBaseShape, type: z.literal('http-request'), config: workflowHttpRequestConfigSchema.optional() }).strict(),
   z.object({ ...workflowNodeBaseShape, type: z.literal('merge'), config: workflowMergeConfigSchema.optional() }).strict(),
   z.object({ ...workflowNodeBaseShape, type: z.literal('subworkflow'), config: workflowSubWorkflowConfigSchema.optional() }).strict(),

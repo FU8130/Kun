@@ -585,4 +585,143 @@ describe('WorkflowRuntime end-to-end execution', () => {
     expect(output._done).toBe(true)
     runtime.stop()
   }, 15_000)
+
+  it('sort orders the upstream array by a numeric field', async () => {
+    const store = createStore(
+      settingsWithWorkflows([
+        buildWorkflow({
+          id: 'wf-sort',
+          name: 'Sort',
+          enabled: true,
+          nodes: [
+            { id: 'm', type: 'manual-trigger', config: {} },
+            { id: 'c', type: 'code', config: { code: 'return [{v:3},{v:1},{v:2}]' } },
+            { id: 'srt', type: 'sort', config: { field: 'v', order: 'asc', numeric: true } }
+          ],
+          connections: [
+            { id: 'e1', source: 'm', sourceHandle: 'out', target: 'c', targetHandle: 'in' },
+            { id: 'e2', source: 'c', sourceHandle: 'out', target: 'srt', targetHandle: 'in' }
+          ]
+        })
+      ])
+    )
+    const runtime = createWorkflowRuntime({ store: store as never, runtimeRequest: vi.fn() as never, logError: vi.fn() })
+    const runId = requireOk(await runtime.runWorkflow('wf-sort'))
+    await waitFor(async () => {
+      const run = (await store.load()).workflow.workflows[0].runs.find((entry) => entry.id === runId)
+      return Boolean(run && run.status !== 'running')
+    }, 10_000)
+    const run = store.read().workflow.workflows[0].runs.find((entry) => entry.id === runId)!
+    expect(run.status).toBe('success')
+    const sorted = run.nodeResults.find((result) => result.nodeId === 'srt')!
+    expect(JSON.parse(sorted.outputJson)).toEqual([{ v: 1 }, { v: 2 }, { v: 3 }])
+    runtime.stop()
+  }, 15_000)
+
+  it('limit keeps the last N items of the upstream array', async () => {
+    const store = createStore(
+      settingsWithWorkflows([
+        buildWorkflow({
+          id: 'wf-limit',
+          name: 'Limit',
+          enabled: true,
+          nodes: [
+            { id: 'm', type: 'manual-trigger', config: {} },
+            { id: 'c', type: 'code', config: { code: 'return [1,2,3,4,5]' } },
+            { id: 'lim', type: 'limit', config: { count: 2, from: 'last' } }
+          ],
+          connections: [
+            { id: 'e1', source: 'm', sourceHandle: 'out', target: 'c', targetHandle: 'in' },
+            { id: 'e2', source: 'c', sourceHandle: 'out', target: 'lim', targetHandle: 'in' }
+          ]
+        })
+      ])
+    )
+    const runtime = createWorkflowRuntime({ store: store as never, runtimeRequest: vi.fn() as never, logError: vi.fn() })
+    const runId = requireOk(await runtime.runWorkflow('wf-limit'))
+    await waitFor(async () => {
+      const run = (await store.load()).workflow.workflows[0].runs.find((entry) => entry.id === runId)
+      return Boolean(run && run.status !== 'running')
+    }, 10_000)
+    const run = store.read().workflow.workflows[0].runs.find((entry) => entry.id === runId)!
+    expect(run.status).toBe('success')
+    const limited = run.nodeResults.find((result) => result.nodeId === 'lim')!
+    expect(JSON.parse(limited.outputJson)).toEqual([4, 5])
+    runtime.stop()
+  }, 15_000)
+
+  it('aggregate sums a field across the upstream array', async () => {
+    const store = createStore(
+      settingsWithWorkflows([
+        buildWorkflow({
+          id: 'wf-agg',
+          name: 'Agg',
+          enabled: true,
+          nodes: [
+            { id: 'm', type: 'manual-trigger', config: {} },
+            { id: 'c', type: 'code', config: { code: 'return [{price:10},{price:5},{price:7}]' } },
+            { id: 'ag', type: 'aggregate', config: { mode: 'sum', field: 'price', separator: ', ' } }
+          ],
+          connections: [
+            { id: 'e1', source: 'm', sourceHandle: 'out', target: 'c', targetHandle: 'in' },
+            { id: 'e2', source: 'c', sourceHandle: 'out', target: 'ag', targetHandle: 'in' }
+          ]
+        })
+      ])
+    )
+    const runtime = createWorkflowRuntime({ store: store as never, runtimeRequest: vi.fn() as never, logError: vi.fn() })
+    const runId = requireOk(await runtime.runWorkflow('wf-agg'))
+    await waitFor(async () => {
+      const run = (await store.load()).workflow.workflows[0].runs.find((entry) => entry.id === runId)
+      return Boolean(run && run.status !== 'running')
+    }, 10_000)
+    const run = store.read().workflow.workflows[0].runs.find((entry) => entry.id === runId)!
+    expect(run.status).toBe('success')
+    const agg = run.nodeResults.find((result) => result.nodeId === 'ag')!
+    expect(JSON.parse(agg.outputJson)).toEqual({ sum: 22 })
+    runtime.stop()
+  }, 15_000)
+
+  it('filter passes the branch when the condition holds and prunes it otherwise', async () => {
+    const makeFilterWorkflow = (id: string, rightValue: string): WorkflowV1 =>
+      buildWorkflow({
+        id,
+        name: id,
+        enabled: true,
+        nodes: [
+          { id: 'm', type: 'manual-trigger', config: {} },
+          { id: 's', type: 'set-fields', config: { fields: [{ key: 'v', value: 'B' }], keepIncoming: false } },
+          { id: 'f', type: 'filter', config: { leftExpr: 'json.v', operator: 'equals', rightValue, caseSensitive: false } },
+          { id: 'd', type: 'set-fields', config: { fields: [{ key: 'hit', value: '1' }], keepIncoming: false } }
+        ],
+        connections: [
+          { id: 'e1', source: 'm', sourceHandle: 'out', target: 's', targetHandle: 'in' },
+          { id: 'e2', source: 's', sourceHandle: 'out', target: 'f', targetHandle: 'in' },
+          { id: 'e3', source: 'f', sourceHandle: 'out', target: 'd', targetHandle: 'in' }
+        ]
+      })
+
+    const store = createStore(
+      settingsWithWorkflows([makeFilterWorkflow('wf-pass', 'B'), makeFilterWorkflow('wf-block', 'C')])
+    )
+    const runtime = createWorkflowRuntime({ store: store as never, runtimeRequest: vi.fn() as never, logError: vi.fn() })
+
+    const passId = requireOk(await runtime.runWorkflow('wf-pass'))
+    const blockId = requireOk(await runtime.runWorkflow('wf-block'))
+    await waitFor(async () => {
+      const settings = await store.load()
+      const passRun = settings.workflow.workflows.find((wf) => wf.id === 'wf-pass')!.runs.find((e) => e.id === passId)
+      const blockRun = settings.workflow.workflows.find((wf) => wf.id === 'wf-block')!.runs.find((e) => e.id === blockId)
+      return Boolean(passRun && passRun.status !== 'running' && blockRun && blockRun.status !== 'running')
+    }, 10_000)
+
+    const settings = store.read()
+    const passRun = settings.workflow.workflows.find((wf) => wf.id === 'wf-pass')!.runs.find((e) => e.id === passId)!
+    const blockRun = settings.workflow.workflows.find((wf) => wf.id === 'wf-block')!.runs.find((e) => e.id === blockId)!
+    expect(passRun.status).toBe('success')
+    expect(passRun.nodeResults.map((r) => r.nodeId)).toContain('d')
+    expect(blockRun.status).toBe('success')
+    expect(blockRun.nodeResults.map((r) => r.nodeId)).not.toContain('d')
+    runtime.stop()
+  }, 15_000)
 })

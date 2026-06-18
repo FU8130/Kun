@@ -16,8 +16,12 @@ export const WORKFLOW_PALETTE: readonly WorkflowNodeKind[] = [
   'generate-image',
   'condition',
   'switch',
+  'filter',
   'set-fields',
   'code',
+  'sort',
+  'limit',
+  'aggregate',
   'http-request',
   'merge',
   'subworkflow',
@@ -82,12 +86,24 @@ export function createWorkflowNode(
         type: 'switch',
         config: { rules: [{ leftExpr: '', operator: 'contains', rightValue: '', caseSensitive: false }], fallback: true }
       }
+    case 'filter':
+      return {
+        ...base,
+        type: 'filter',
+        config: { leftExpr: '', operator: 'contains', rightValue: '', caseSensitive: false }
+      }
     case 'set-fields':
       return {
         ...base,
         type: 'set-fields',
         config: { fields: [{ key: '', value: '' }], keepIncoming: false }
       }
+    case 'sort':
+      return { ...base, type: 'sort', config: { field: '', order: 'asc', numeric: false } }
+    case 'limit':
+      return { ...base, type: 'limit', config: { count: 10, from: 'first' } }
+    case 'aggregate':
+      return { ...base, type: 'aggregate', config: { mode: 'count', field: '', separator: ', ' } }
     case 'code':
       return {
         ...base,

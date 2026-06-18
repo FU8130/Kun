@@ -719,6 +719,151 @@ export function NodeConfigPanel({ node, settings, lastResult, onChange, onDelete
           </Field>
         ) : null}
 
+        {node.type === 'filter' ? (
+          <>
+            <p className="text-[11.5px] leading-5 text-ds-faint">{t('workflowFilterHint')}</p>
+            <Field label={t('workflowConditionLeft')}>
+              <input
+                className={INPUT_CLASS}
+                value={node.config.leftExpr}
+                placeholder={t('workflowConditionLeftPlaceholder')}
+                onChange={(event) => onChange({ ...node, config: { ...node.config, leftExpr: event.target.value } })}
+              />
+            </Field>
+            <Field label={t('workflowConditionOperator')}>
+              <select
+                className={INPUT_CLASS}
+                value={node.config.operator}
+                onChange={(event) =>
+                  onChange({ ...node, config: { ...node.config, operator: event.target.value as WorkflowConditionOperator } })
+                }
+              >
+                {CONDITION_OPERATORS.map((operator) => (
+                  <option key={operator} value={operator}>
+                    {t(`workflowOp_${operator}`)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('workflowConditionValue')}>
+              <input
+                className={INPUT_CLASS}
+                value={node.config.rightValue}
+                onChange={(event) => onChange({ ...node, config: { ...node.config, rightValue: event.target.value } })}
+              />
+            </Field>
+          </>
+        ) : null}
+
+        {node.type === 'sort' ? (
+          <>
+            <p className="text-[11.5px] leading-5 text-ds-faint">{t('workflowArrayHint')}</p>
+            <Field label={t('workflowSortField')}>
+              <input
+                className={INPUT_CLASS}
+                value={node.config.field}
+                placeholder="value / user.name"
+                onChange={(event) => onChange({ ...node, config: { ...node.config, field: event.target.value } })}
+              />
+            </Field>
+            <Field label={t('workflowSortOrder')}>
+              <select
+                className={INPUT_CLASS}
+                value={node.config.order}
+                onChange={(event) =>
+                  onChange({ ...node, config: { ...node.config, order: event.target.value === 'desc' ? 'desc' : 'asc' } })
+                }
+              >
+                <option value="asc">{t('workflowSortAsc')}</option>
+                <option value="desc">{t('workflowSortDesc')}</option>
+              </select>
+            </Field>
+            <label className="flex items-center gap-2 text-[13px] text-ds-ink">
+              <input
+                type="checkbox"
+                checked={node.config.numeric}
+                onChange={(event) => onChange({ ...node, config: { ...node.config, numeric: event.target.checked } })}
+              />
+              {t('workflowSortNumeric')}
+            </label>
+          </>
+        ) : null}
+
+        {node.type === 'limit' ? (
+          <>
+            <p className="text-[11.5px] leading-5 text-ds-faint">{t('workflowArrayHint')}</p>
+            <Field label={t('workflowLimitCount')}>
+              <input
+                type="number"
+                min={1}
+                className={INPUT_CLASS}
+                value={node.config.count}
+                onChange={(event) =>
+                  onChange({ ...node, config: { ...node.config, count: Math.max(1, Number(event.target.value) || 1) } })
+                }
+              />
+            </Field>
+            <Field label={t('workflowLimitFrom')}>
+              <select
+                className={INPUT_CLASS}
+                value={node.config.from}
+                onChange={(event) =>
+                  onChange({ ...node, config: { ...node.config, from: event.target.value === 'last' ? 'last' : 'first' } })
+                }
+              >
+                <option value="first">{t('workflowLimitFirst')}</option>
+                <option value="last">{t('workflowLimitLast')}</option>
+              </select>
+            </Field>
+          </>
+        ) : null}
+
+        {node.type === 'aggregate' ? (
+          <>
+            <p className="text-[11.5px] leading-5 text-ds-faint">{t('workflowArrayHint')}</p>
+            <Field label={t('workflowAggregateMode')}>
+              <select
+                className={INPUT_CLASS}
+                value={node.config.mode}
+                onChange={(event) => {
+                  const mode = event.target.value
+                  onChange({
+                    ...node,
+                    config: {
+                      ...node.config,
+                      mode: mode === 'sum' || mode === 'collect' || mode === 'join' ? mode : 'count'
+                    }
+                  })
+                }}
+              >
+                <option value="count">{t('workflowAggCount')}</option>
+                <option value="sum">{t('workflowAggSum')}</option>
+                <option value="collect">{t('workflowAggCollect')}</option>
+                <option value="join">{t('workflowAggJoin')}</option>
+              </select>
+            </Field>
+            {node.config.mode !== 'count' ? (
+              <Field label={t('workflowAggregateField')}>
+                <input
+                  className={INPUT_CLASS}
+                  value={node.config.field}
+                  placeholder="value / price"
+                  onChange={(event) => onChange({ ...node, config: { ...node.config, field: event.target.value } })}
+                />
+              </Field>
+            ) : null}
+            {node.config.mode === 'join' ? (
+              <Field label={t('workflowAggregateSeparator')}>
+                <input
+                  className={INPUT_CLASS}
+                  value={node.config.separator}
+                  onChange={(event) => onChange({ ...node, config: { ...node.config, separator: event.target.value } })}
+                />
+              </Field>
+            ) : null}
+          </>
+        ) : null}
+
         {node.type === 'delay' ? (
           <Field label={t('workflowDelaySeconds')}>
             <input

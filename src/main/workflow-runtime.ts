@@ -200,6 +200,22 @@ function readPath(payload: WorkflowPayload, path: string): unknown {
   return cursor
 }
 
+/** Drill into a value by a dot-path (e.g. "user.name"); empty path returns the value itself. */
+function getByPath(value: unknown, path: string): unknown {
+  const trimmed = path.trim()
+  if (!trimmed) return value
+  const segments = trimmed.replace(/^json\.?/, '').split('.').filter(Boolean)
+  let cursor: unknown = value
+  for (const segment of segments) {
+    if (cursor && typeof cursor === 'object' && segment in (cursor as Record<string, unknown>)) {
+      cursor = (cursor as Record<string, unknown>)[segment]
+    } else {
+      return undefined
+    }
+  }
+  return cursor
+}
+
 function stringifyValue(value: unknown): string {
   if (value === undefined || value === null) return ''
   return typeof value === 'string' ? value : safeJson(value)
@@ -1014,6 +1030,45 @@ export class WorkflowRuntime {
         }
         const json = base
         return { payload: { json, text: safeJson(json) }, message: `${node.config.fields.length} fields` }
+      }
+      case 'filter': {
+        const pass = evaluateCondition(node.config, payload)
+        return { payload, message: pass ? 'pass' : 'blocked', branch: pass ? undefined : NO_BRANCH }
+      }
+      case 'sort': {
+        const items = Array.isArray(payload.json) ? [...(payload.json as unknown[])] : []
+        const { field, order, numeric } = node.config
+        items.sort((a, b) => {
+          const av = field ? getByPath(a, field) : a
+          const bv = field ? getByPath(b, field) : b
+          const cmp = numeric
+            ? (Number(av) || 0) - (Number(bv) || 0)
+            : String(av ?? '').localeCompare(String(bv ?? ''))
+          return order === 'desc' ? -cmp : cmp
+        })
+        return { payload: { json: items, text: safeJson(items) }, message: `sorted ${items.length}` }
+      }
+      case 'limit': {
+        const items = Array.isArray(payload.json) ? (payload.json as unknown[]) : []
+        const out = node.config.from === 'last' ? items.slice(-node.config.count) : items.slice(0, node.config.count)
+        return { payload: { json: out, text: safeJson(out) }, message: `${out.length} items` }
+      }
+      case 'aggregate': {
+        const items = Array.isArray(payload.json) ? (payload.json as unknown[]) : []
+        const valueOf = (item: unknown): unknown => (node.config.field ? getByPath(item, node.config.field) : item)
+        if (node.config.mode === 'sum') {
+          const sum = items.reduce<number>((acc, item) => acc + (Number(valueOf(item)) || 0), 0)
+          return { payload: { json: { sum }, text: safeJson({ sum }) }, message: `sum ${sum}` }
+        }
+        if (node.config.mode === 'join') {
+          const text = items.map((item) => stringifyValue(valueOf(item))).join(node.config.separator || ', ')
+          return { payload: { json: { text }, text }, message: `joined ${items.length}` }
+        }
+        if (node.config.mode === 'collect') {
+          const values = items.map((item) => valueOf(item))
+          return { payload: { json: { values }, text: safeJson({ values }) }, message: `collected ${values.length}` }
+        }
+        return { payload: { json: { count: items.length }, text: safeJson({ count: items.length }) }, message: `count ${items.length}` }
       }
       case 'http-request':
         return runHttpNode(node.config, payload)

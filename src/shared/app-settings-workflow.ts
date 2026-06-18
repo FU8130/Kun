@@ -206,6 +206,17 @@ export function normalizeWorkflowNode(value: unknown, index: number): WorkflowNo
           fallback: normalizeBoolean(config.fallback, true)
         }
       }
+    case 'filter':
+      return {
+        ...base,
+        type: 'filter',
+        config: {
+          leftExpr: asText(config.leftExpr),
+          operator: normalizeConditionOperator(config.operator),
+          rightValue: asText(config.rightValue),
+          caseSensitive: normalizeBoolean(config.caseSensitive, false)
+        }
+      }
     case 'set-fields':
       return {
         ...base,
@@ -213,6 +224,36 @@ export function normalizeWorkflowNode(value: unknown, index: number): WorkflowNo
         config: {
           fields: normalizeFields(config.fields),
           keepIncoming: normalizeBoolean(config.keepIncoming, false)
+        }
+      }
+    case 'sort':
+      return {
+        ...base,
+        type: 'sort',
+        config: {
+          field: asTrimmed(config.field),
+          order: config.order === 'desc' ? 'desc' : 'asc',
+          numeric: normalizeBoolean(config.numeric, false)
+        }
+      }
+    case 'limit':
+      return {
+        ...base,
+        type: 'limit',
+        config: {
+          count: normalizePositiveInteger(config.count, 10, 1, 100_000),
+          from: config.from === 'last' ? 'last' : 'first'
+        }
+      }
+    case 'aggregate':
+      return {
+        ...base,
+        type: 'aggregate',
+        config: {
+          mode:
+            config.mode === 'sum' || config.mode === 'collect' || config.mode === 'join' ? config.mode : 'count',
+          field: asTrimmed(config.field),
+          separator: asText(config.separator)
         }
       }
     case 'code':

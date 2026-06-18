@@ -545,8 +545,12 @@ export type WorkflowNodeKind =
   | 'generate-image'
   | 'condition'
   | 'switch'
+  | 'filter'
   | 'set-fields'
   | 'code'
+  | 'sort'
+  | 'limit'
+  | 'aggregate'
   | 'http-request'
   | 'merge'
   | 'subworkflow'
@@ -561,8 +565,12 @@ export const WORKFLOW_NODE_KINDS: readonly WorkflowNodeKind[] = [
   'generate-image',
   'condition',
   'switch',
+  'filter',
   'set-fields',
   'code',
+  'sort',
+  'limit',
+  'aggregate',
   'http-request',
   'merge',
   'subworkflow',
@@ -653,6 +661,37 @@ export type WorkflowSwitchConfigV1 = {
   fallback: boolean
 }
 
+/** Filter gate: passes the payload through only when the condition holds. */
+export type WorkflowFilterConfigV1 = {
+  leftExpr: string
+  operator: WorkflowConditionOperator
+  rightValue: string
+  caseSensitive: boolean
+}
+
+export type WorkflowSortOrder = 'asc' | 'desc'
+export type WorkflowSortConfigV1 = {
+  /** Field path within each array item; empty sorts by the item itself. */
+  field: string
+  order: WorkflowSortOrder
+  numeric: boolean
+}
+
+export type WorkflowLimitFrom = 'first' | 'last'
+export type WorkflowLimitConfigV1 = {
+  count: number
+  from: WorkflowLimitFrom
+}
+
+export type WorkflowAggregateMode = 'count' | 'sum' | 'collect' | 'join'
+export type WorkflowAggregateConfigV1 = {
+  mode: WorkflowAggregateMode
+  /** Field path within each array item (for sum/collect/join). */
+  field: string
+  /** Separator for 'join' mode. */
+  separator: string
+}
+
 export type WorkflowMergeMode = 'array' | 'object'
 
 export type WorkflowMergeConfigV1 = {
@@ -726,8 +765,12 @@ export type WorkflowNodeConfigByKind = {
   'generate-image': WorkflowGenerateImageConfigV1
   condition: WorkflowConditionConfigV1
   switch: WorkflowSwitchConfigV1
+  filter: WorkflowFilterConfigV1
   'set-fields': WorkflowSetFieldsConfigV1
   code: WorkflowCodeConfigV1
+  sort: WorkflowSortConfigV1
+  limit: WorkflowLimitConfigV1
+  aggregate: WorkflowAggregateConfigV1
   'http-request': WorkflowHttpRequestConfigV1
   merge: WorkflowMergeConfigV1
   subworkflow: WorkflowSubWorkflowConfigV1
