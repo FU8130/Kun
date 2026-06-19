@@ -1,5 +1,5 @@
 import { mkdir, readFile, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { MemoryCapabilityConfig } from '../contracts/capabilities.js'
 import { atomicWriteFile } from '../adapters/file/atomic-write.js'
 import {
@@ -11,13 +11,15 @@ import {
 
 export interface MemoryStore {
   create(input: MemoryCreateRequest): Promise<MemoryRecord>
-  update(id: string, patch: MemoryUpdateRequest): Promise<MemoryRecord>
-  delete(id: string): Promise<MemoryRecord>
+  update(id: string, patch: MemoryUpdateRequest, access?: MemoryAccess): Promise<MemoryRecord>
+  delete(id: string, access?: MemoryAccess): Promise<MemoryRecord>
   list(filter?: { workspace?: string; includeDeleted?: boolean }): Promise<MemoryRecord[]>
   retrieve(input: { query: string; workspace?: string; limit: number }): Promise<MemoryRecord[]>
   diagnostics(): Promise<MemoryDiagnostics>
   setLastInjected(ids: string[]): void
 }
+
+export type MemoryAccess = { workspace?: string }
 
 export class FileMemoryStore implements MemoryStore {
   private lastInjectedIds: string[] = []
@@ -34,12 +36,15 @@ export class FileMemoryStore implements MemoryStore {
   async create(input: MemoryCreateRequest): Promise<MemoryRecord> {
     await mkdir(this.options.rootDir, { recursive: true })
     const now = this.now()
+    const scope = input.scope ?? 'workspace'
+    const workspace = normalizeScopePath(input.workspace)
+    const project = normalizeScopePath(input.project ?? (scope === 'project' ? input.workspace : undefined))
     const parsed = MemoryRecord.parse({
       id: this.options.idGenerator?.() ?? `mem_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
       content: input.content,
-      scope: input.scope ?? 'workspace',
-      workspace: input.workspace,
-      project: input.project,
+      scope,
+      ...(scope !== 'user' && workspace ? { workspace } : {}),
+      ...(scope === 'project' && project ? { project } : {}),
       sourceThreadId: input.sourceThreadId,
       sourceTurnId: input.sourceTurnId,
       tags: input.tags ?? [],
@@ -51,8 +56,8 @@ export class FileMemoryStore implements MemoryStore {
     return parsed
   }
 
-  async update(id: string, patch: MemoryUpdateRequest): Promise<MemoryRecord> {
-    const current = await this.mustGet(id)
+  async update(id: string, patch: MemoryUpdateRequest, access?: MemoryAccess): Promise<MemoryRecord> {
+    const current = await this.mustGet(id, access)
     const now = this.now()
     const next = MemoryRecord.parse({
       ...current,
@@ -67,8 +72,8 @@ export class FileMemoryStore implements MemoryStore {
     return next
   }
 
-  async delete(id: string): Promise<MemoryRecord> {
-    const current = await this.mustGet(id)
+  async delete(id: string, access?: MemoryAccess): Promise<MemoryRecord> {
+    const current = await this.mustGet(id, access)
     const now = this.now()
     const next = MemoryRecord.parse({
       ...current,
@@ -122,9 +127,11 @@ export class FileMemoryStore implements MemoryStore {
     this.lastInjectedIds = [...ids]
   }
 
-  private async mustGet(id: string): Promise<MemoryRecord> {
+  private async mustGet(id: string, access?: MemoryAccess): Promise<MemoryRecord> {
     const record = (await this.readAll()).find((candidate) => candidate.id === id)
-    if (!record) throw new Error(`memory not found: ${id}`)
+    if (!record || (access && !inScope(record, access.workspace))) {
+      throw new Error(`memory not found: ${id}`)
+    }
     return record
   }
 
@@ -153,14 +160,20 @@ export class FileMemoryStore implements MemoryStore {
 
 function inScope(record: MemoryRecord, workspace: string | undefined): boolean {
   if (record.scope === 'user') return true
+  const currentWorkspace = normalizeScopePath(workspace)
+  if (!currentWorkspace) return false
   if (record.scope === 'workspace') {
-    // Records created via the GUI may not carry a workspace (e.g. manually
-    // added before any thread ran). Treat a missing workspace as in-scope so
-    // they are still retrievable; otherwise require an exact match.
-    if (!record.workspace) return true
-    return Boolean(workspace && record.workspace === workspace)
+    return normalizeScopePath(record.workspace) === currentWorkspace
   }
-  return true
+  const project = normalizeScopePath(record.project ?? record.workspace)
+  return Boolean(project && project === currentWorkspace)
+}
+
+function normalizeScopePath(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  if (!trimmed) return undefined
+  const normalized = resolve(trimmed)
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
 }
 
 function scoreMemory(record: MemoryRecord, query: string): number {

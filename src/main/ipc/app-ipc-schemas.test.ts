@@ -184,6 +184,10 @@ describe('app-ipc-schemas', () => {
     expect(payload.disabledSkillIds).toEqual(['test-skill-08'])
   })
 
+  it('accepts the cursor spotlight preference', () => {
+    expect(settingsPatchSchema.parse({ cursorSpotlight: false }).cursorSpotlight).toBe(false)
+  })
+
   it('accepts media generation settings and provider capability patches', () => {
     const payload = settingsPatchSchema.parse({
       provider: {
@@ -310,7 +314,7 @@ describe('app-ipc-schemas', () => {
     expect(fromText.modelHint).toBe('deepseek-v4-pro')
   })
 
-  it('strips legacy settings keys before validating settings patches', () => {
+  it('strips legacy settings keys while preserving current skill settings', () => {
     const payload = settingsPatchSchema.parse({
       locale: 'zh',
       disabledSkillIds: ['legacy-skill'],
@@ -340,7 +344,7 @@ describe('app-ipc-schemas', () => {
     expect(payload.provider?.providers?.[0]?.imageRecognition).toEqual({ enabled: true })
     expect(payload.agents?.kun?.port).toBe(9001)
     expect(payload.agents?.kun?.imageRecognition).toEqual({ enabled: true })
-    expect('disabledSkillIds' in payload).toBe(false)
+    expect(payload.disabledSkillIds).toEqual(['legacy-skill'])
     expect('reasonix' in payload).toBe(false)
     expect('quickChat' in payload).toBe(false)
     expect('reasonix' in (payload.agents ?? {})).toBe(false)
@@ -394,6 +398,22 @@ describe('app-ipc-schemas', () => {
       id: 'deepseek',
       apiKey: 'sk-updated',
       endpointFormat: 'responses'
+    })
+  })
+
+  it('accepts model proxy settings in provider patches', () => {
+    const payload = settingsPatchSchema.parse({
+      provider: {
+        proxy: {
+          enabled: true,
+          url: 'socks5://127.0.0.1:1080'
+        }
+      }
+    })
+
+    expect(payload.provider?.proxy).toEqual({
+      enabled: true,
+      url: 'socks5://127.0.0.1:1080'
     })
   })
 

@@ -10,6 +10,7 @@ import { GET_GOAL_TOOL_NAME, UPDATE_GOAL_TOOL_NAME } from '../src/adapters/tool/
 import { FileThreadStore, FileSessionStore } from '../src/adapters/file/index.js'
 import { RuntimeEventRecorder } from '../src/services/runtime-event-recorder.js'
 import { ContextCompactor } from '../src/loop/context-compactor.js'
+import { effectiveHistoryAfterLatestCompaction } from '../src/loop/compaction-history.js'
 import { resolveModelContextProfile } from '../src/loop/model-context-profile.js'
 import {
   makeApprovalItem,
@@ -331,6 +332,7 @@ describe('AgentLoop', () => {
           yield { kind: 'completed', stopReason: 'tool_calls' }
           return
         }
+        yield { kind: 'assistant_text_delta', text: 'done' }
         yield { kind: 'completed', stopReason: 'stop' }
       }
     })
@@ -353,6 +355,106 @@ describe('AgentLoop', () => {
       .flatMap((turn) => turn.items)
       .find((item) => item.kind === 'tool_call' && item.callId === 'call_echo')
     expect(toolCall).toMatchObject({ kind: 'tool_call', status: 'completed' })
+  })
+
+  it('retries an empty model continuation after a file change', async () => {
+    let calls = 0
+    const requests: ModelRequest[] = []
+    const writeHelper = LocalToolHost.defineTool({
+      name: 'write_helper',
+      description: 'Write a helper script.',
+      inputSchema: { type: 'object', properties: {} },
+      policy: 'auto',
+      toolKind: 'file_change',
+      execute: async () => ({ output: { ok: true } })
+    })
+    const h = makeHarness(
+      {
+        provider: 'empty-after-tool',
+        model: 'empty-after-tool',
+        async *stream(request): AsyncIterable<ModelStreamChunk> {
+          requests.push(request)
+          calls += 1
+          if (calls === 1) {
+            yield {
+              kind: 'tool_call_complete',
+              callId: 'call_write_helper',
+              toolName: 'write_helper',
+              arguments: {}
+            }
+            yield { kind: 'completed', stopReason: 'tool_calls' }
+            return
+          }
+          if (calls === 2) {
+            yield { kind: 'completed', stopReason: 'stop' }
+            return
+          }
+          yield { kind: 'assistant_text_delta', text: 'analysis complete' }
+          yield { kind: 'completed', stopReason: 'stop' }
+        }
+      },
+      { tools: [writeHelper] }
+    )
+    await bootstrapThread(h)
+
+    const status = await h.loop.runTurn(h.threadId, h.turnId)
+    const items = await h.sessionStore.loadItems(h.threadId)
+
+    expect(status).toBe('completed')
+    expect(calls).toBe(3)
+    expect(requests[2]?.contextInstructions?.join('\n')).toContain('Tool continuation recovery')
+    expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'assistant_text',
+        text: 'analysis complete'
+      })
+    ]))
+  })
+
+  it('fails visibly when the model repeats an empty post-tool continuation', async () => {
+    let calls = 0
+    const writeHelper = LocalToolHost.defineTool({
+      name: 'write_helper',
+      description: 'Write a helper script.',
+      inputSchema: { type: 'object', properties: {} },
+      policy: 'auto',
+      toolKind: 'file_change',
+      execute: async () => ({ output: { ok: true } })
+    })
+    const h = makeHarness(
+      {
+        provider: 'repeated-empty-after-tool',
+        model: 'repeated-empty-after-tool',
+        async *stream(): AsyncIterable<ModelStreamChunk> {
+          calls += 1
+          if (calls === 1) {
+            yield {
+              kind: 'tool_call_complete',
+              callId: 'call_write_helper',
+              toolName: 'write_helper',
+              arguments: {}
+            }
+            yield { kind: 'completed', stopReason: 'tool_calls' }
+            return
+          }
+          yield { kind: 'completed', stopReason: 'stop' }
+        }
+      },
+      { tools: [writeHelper] }
+    )
+    await bootstrapThread(h)
+
+    const status = await h.loop.runTurn(h.threadId, h.turnId)
+    const items = await h.sessionStore.loadItems(h.threadId)
+
+    expect(status).toBe('failed')
+    expect(calls).toBe(3)
+    expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'error',
+        code: 'empty_post_tool_continuation'
+      })
+    ]))
   })
 
   it('keeps running past the legacy eight-step ceiling until the model stops', async () => {
@@ -1269,6 +1371,7 @@ describe('AgentLoop', () => {
             yield { kind: 'completed', stopReason: 'tool_calls' }
             return
           }
+          yield { kind: 'assistant_text_delta', text: 'done' }
           yield { kind: 'completed', stopReason: 'stop' }
         }
       },
@@ -1931,7 +2034,29 @@ describe('AgentLoop', () => {
     ]
 
     expect(compactor.shouldCompact(tinyHistory)).toBe(false)
-    expect(compactor.shouldCompact(tinyHistory, { promptTokens: 120 })).toBe(true)
+    // A reported count within PROMPT_TOKEN_TRUST_FACTOR of the estimate (here
+    // the per-request system/tool overhead) is honoured and drives compaction.
+    expect(compactor.shouldCompact(tinyHistory, { promptTokens: 120, overheadTokens: 40 })).toBe(true)
+  })
+
+  it('ignores prompt tokens inflated far beyond the local estimate', () => {
+    // Regression: MiniMax-M3 folds cumulative cache reads into prompt_tokens and
+    // reported ~1.2M for a thread whose real content was ~33k, stranding it at
+    // "100%" and firing compaction that folded almost nothing. An implausibly
+    // large reported count must be ignored in favour of the local estimate.
+    const compactor = new ContextCompactor({ softThreshold: 100, hardThreshold: 200 })
+    const history = [
+      makeUserItem({ id: 'h', turnId: 'turn_1', threadId: 'thr_1', text: 'x'.repeat(360) })
+    ]
+
+    // ~90 estimated tokens of real content, below the soft threshold.
+    expect(compactor.shouldCompact(history)).toBe(false)
+    // A plausible provider count (within the trust factor) still triggers.
+    expect(compactor.shouldCompact(history, { promptTokens: 300 })).toBe(true)
+    // An order-of-magnitude-inflated count is dropped; the estimate wins, so a
+    // genuinely small thread is not pinned at the threshold compacting nothing.
+    expect(compactor.shouldCompact(history, { promptTokens: 1_000_000 })).toBe(false)
+    expect(compactor.planCompaction(history, { promptTokens: 1_000_000 })).toBeNull()
   })
 
   it('adds per-request overhead to the estimate-only compaction trigger', () => {
@@ -1966,15 +2091,17 @@ describe('AgentLoop', () => {
       })
     ]
 
-    expect(compactor.planCompaction(tinyHistory, { promptTokens: 120 })).toMatchObject({
+    // overheadTokens keeps the reported counts within the trust factor of the
+    // estimate (mirroring the real per-request system/tool floor).
+    expect(compactor.planCompaction(tinyHistory, { promptTokens: 120, overheadTokens: 40 })).toMatchObject({
       mode: 'normal',
       keepRecent: 4
     })
-    expect(compactor.planCompaction(tinyHistory, { promptTokens: 160 })).toMatchObject({
+    expect(compactor.planCompaction(tinyHistory, { promptTokens: 160, overheadTokens: 40 })).toMatchObject({
       mode: 'aggressive',
       keepRecent: 2
     })
-    expect(compactor.planCompaction(tinyHistory, { promptTokens: 220 })).toMatchObject({
+    expect(compactor.planCompaction(tinyHistory, { promptTokens: 220, overheadTokens: 40 })).toMatchObject({
       mode: 'force',
       keepRecent: 1
     })
@@ -2087,7 +2214,15 @@ describe('AgentLoop', () => {
     }
     await h.loop.runTurn(h.threadId, h.turnId)
     const items = await h.sessionStore.loadItems(h.threadId)
+    const effectiveItems = effectiveHistoryAfterLatestCompaction(items)
     expect(items.some((item) => item.kind === 'compaction')).toBe(true)
+    // The visible transcript remains complete, while the model-visible
+    // projection starts at the latest compaction marker followed by the recent
+    // tail kept verbatim.
+    expect(items.some((item) => item.id === 'hist_0')).toBe(true)
+    expect(effectiveItems[0]?.kind).toBe('compaction')
+    expect(effectiveItems.some((item) => item.id === 'hist_0')).toBe(false)
+    expect(effectiveItems.length).toBeLessThan(items.length)
   })
 
   it('can use a model summary for history compaction while reusing the main prefix', async () => {

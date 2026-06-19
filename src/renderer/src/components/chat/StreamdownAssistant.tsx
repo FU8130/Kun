@@ -161,15 +161,14 @@ export function StreamdownAssistant({ text, streaming, className }: Props): Reac
   return (
     <Streamdown
       className={className}
-      mode={streaming ? 'streaming' : 'static'}
-      parseIncompleteMarkdown={streaming}
-      isAnimating={streaming}
-      // Streamdown's own per-char animation must stay OFF: it diffs old vs
-      // new chars by position in a count that excludes code/pre text, so
-      // every time an inline-code chip closes during streaming the
-      // positions shift and already-visible text re-animates from
-      // transparent — the patchy "missing text" look. The pacing hook
-      // above is the typewriter; revealed chars render crisp immediately.
+      mode="static"
+      parseIncompleteMarkdown={false}
+      isAnimating={false}
+      // The pacing hook above is the typewriter. Keep Streamdown's own
+      // streaming/remend pipeline disabled here: in long Markdown responses
+      // with GFM tables, its block repair path can leave stale text fragments
+      // next to the repaired block, producing copied DOM text such as
+      // "Work Workstreamstream".
       animated={false}
       remarkPlugins={[remarkGfm]}
       rehypePlugins={rehypePlugins}

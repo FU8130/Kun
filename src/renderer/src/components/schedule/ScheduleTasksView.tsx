@@ -43,6 +43,10 @@ import {
 import { rendererRuntimeClient } from '../../agent/runtime-client'
 import { confirmDialog } from '../../lib/confirm-dialog'
 import { formatWorkspacePickerError } from '../../lib/format-workspace-picker-error'
+import {
+  compactHomePathForSettingsDisplay,
+  expandHomePathForSettingsUse
+} from '../../lib/settings-home-paths'
 import { SidebarTitlebarToggleButton } from '../sidebar/SidebarPrimitives'
 import { ScheduleDefaultsDialog } from './ScheduleDefaultsDialog'
 
@@ -483,7 +487,9 @@ export function ScheduleTasksView({
       if (typeof window.kunGui?.pickWorkspaceDirectory !== 'function') {
         throw new Error(t('workspacePickerUnavailable'))
       }
-      const picked = await window.kunGui.pickWorkspaceDirectory(resolveDialogWorkspaceRoot(dialog.draft.workspaceRoot) || undefined)
+      const picked = await window.kunGui.pickWorkspaceDirectory(
+        expandHomePathForSettingsUse(resolveDialogWorkspaceRoot(dialog.draft.workspaceRoot)) || undefined
+      )
       if (picked.canceled || !picked.path) return
       onDraftChangeInDialog({ workspaceRoot: picked.path })
       setDialogError(null)
@@ -504,7 +510,7 @@ export function ScheduleTasksView({
       return
     }
     const now = nowIso()
-    const workspaceRoot = resolveDialogWorkspaceRoot(dialog.draft.workspaceRoot)
+    const workspaceRoot = expandHomePathForSettingsUse(resolveDialogWorkspaceRoot(dialog.draft.workspaceRoot))
     const draftClawChannelId = dialog.draft.clawChannelId.trim()
     const selection = resolveScheduleModelSelection(
       modelProviders,
@@ -1194,8 +1200,9 @@ function ScheduleTaskDialog({
                   <FieldLabel>{t('scheduleWorkspace')}</FieldLabel>
                   <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_138px]">
                     <input
-                      value={draft.workspaceRoot}
-                      onChange={(event) => updateDraft({ workspaceRoot: event.target.value })}
+                      value={compactHomePathForSettingsDisplay(draft.workspaceRoot)}
+                      onChange={(event) =>
+                        updateDraft({ workspaceRoot: expandHomePathForSettingsUse(event.target.value) })}
                       placeholder={t('scheduleWorkspacePlaceholder')}
                       className="h-10 w-full rounded-xl border border-ds-border bg-ds-main/55 px-3 text-[14px] text-ds-ink outline-none transition placeholder:text-ds-faint focus:border-accent/45 focus:ring-2 focus:ring-accent/15"
                     />

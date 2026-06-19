@@ -53,6 +53,8 @@ type Props = {
   compactCards?: boolean
 }
 
+type CompactionTimelineBlock = Extract<ChatBlock, { kind: 'compaction' }>
+
 const TURN_PAGE_SIZE = 18
 const AUTO_COLLAPSE_THRESHOLD = 24
 
@@ -102,6 +104,37 @@ function processBlockHasError(block: ChatBlock): boolean {
     (block.kind === 'approval' && block.status === 'error') ||
     (block.kind === 'user_input' && block.status === 'error') ||
     (block.kind === 'system' && block.severity === 'error')
+  )
+}
+
+function compactionDividerLabel(
+  block: CompactionTimelineBlock,
+  t: (key: string, opts?: Record<string, unknown>) => string
+): string {
+  if (block.status === 'running') return t('compactionRunning')
+  if (block.status === 'error') return block.summary || t('compactionFailed')
+  return block.auto === true ? t('compactionAutoCompleted') : t('compactionManualCompleted')
+}
+
+function CompactionDivider({ block }: { block: CompactionTimelineBlock }): ReactElement {
+  const { t } = useTranslation('common')
+  const error = block.status === 'error'
+  return (
+    <div
+      role={block.status === 'running' ? 'status' : undefined}
+      aria-live={block.status === 'running' ? 'polite' : undefined}
+      className="flex w-full items-center gap-4 py-2"
+    >
+      <span className={`h-px min-w-8 flex-1 ${error ? 'bg-red-200/80 dark:bg-red-900/50' : 'bg-ds-border-muted/80'}`} />
+      <span
+        className={`shrink-0 text-[15px] font-semibold leading-6 ${
+          error ? 'text-red-600 dark:text-red-300' : 'text-ds-faint'
+        }`}
+      >
+        {compactionDividerLabel(block, t)}
+      </span>
+      <span className={`h-px min-w-8 flex-1 ${error ? 'bg-red-200/80 dark:bg-red-900/50' : 'bg-ds-border-muted/80'}`} />
+    </div>
   )
 }
 
@@ -408,6 +441,8 @@ function MessageTurn({
 }): ReactElement {
   const workspaceRoot = useChatStore((s) => s.workspaceRoot)
   const activeThreadGoal = useChatStore((s) => s.activeThreadGoal)
+  const forkThreadFromTurn = useChatStore((s) => s.forkThreadFromTurn)
+  const [forking, setForking] = useState(false)
   // Inline Review Plan card: surfaced under a turn that produced a
   // successful `create_plan` result so the user can open/build the plan
   // without leaving the conversation.
@@ -436,7 +471,16 @@ function MessageTurn({
       }),
     [turn, isProcessing, liveProcessText, liveContent, workspaceRoot]
   )
-  const hasProcessError = processBlocks.some(processBlockHasError)
+  const compactionBlocks = useMemo(
+    () => processBlocks.filter((block): block is CompactionTimelineBlock => block.kind === 'compaction'),
+    [processBlocks]
+  )
+  const workProcessBlocks = useMemo(
+    () => processBlocks.filter((block) => block.kind !== 'compaction'),
+    [processBlocks]
+  )
+  const onlyCompactionProcess = processBlocks.length > 0 && workProcessBlocks.length === 0
+  const hasProcessError = workProcessBlocks.some(processBlockHasError)
   const workExpanded = hasProcessError || (workExpandedOverride ?? isProcessing)
   const reviewBlocks = useMemo(
     () => turn.blocks.filter((block) => block.kind === 'review'),
@@ -444,8 +488,8 @@ function MessageTurn({
   )
 
   const processSections = useMemo(
-    () => (workExpanded ? groupProcessSections(processBlocks) : []),
-    [processBlocks, workExpanded]
+    () => (workExpanded ? groupProcessSections(workProcessBlocks) : []),
+    [workProcessBlocks, workExpanded]
   )
   const reasoningSectionCount = useMemo(
     () => processSections.filter((section) => section.kind === 'reasoning').length,
@@ -462,11 +506,29 @@ function MessageTurn({
   // not feishu-specific. Removing the !isProcessing gate is intentional
   // for all streaming paths, not just feishu.
   const showLiveAssistant = !!liveContent.trim()
+  const forkTurnId =
+    turn.user?.turnId?.trim() ||
+    [...assistantContentBlocks].reverse().find((block) => block.turnId?.trim())?.turnId?.trim() ||
+    ''
+  const forkActionBlockId =
+    !isProcessing && forkTurnId
+      ? assistantContentBlocks[assistantContentBlocks.length - 1]?.id
+      : undefined
 
   // Keep completed reasoning/tool work tucked away, but make the active turn's
   // work visible unless the user explicitly collapses it.
 
-  const hasProcess = isProcessing || processBlocks.length > 0
+  const hasProcess = (isProcessing && !onlyCompactionProcess) || workProcessBlocks.length > 0
+  const showLiveProgress = isProcessing && !onlyCompactionProcess
+  const forkFromTurn = async (): Promise<void> => {
+    if (!forkTurnId || forking) return
+    setForking(true)
+    try {
+      await forkThreadFromTurn(forkTurnId)
+    } finally {
+      setForking(false)
+    }
+  }
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -476,7 +538,7 @@ function MessageTurn({
         <div className="flex flex-col gap-1 pb-2">
           <WorkMetaRow
             processing={isProcessing}
-            stepCount={processBlocks.length}
+            stepCount={workProcessBlocks.length}
             durationMs={durationMs}
             reasoningDurationMs={reasoningDurationMs}
             expanded={workExpanded}
@@ -501,7 +563,20 @@ function MessageTurn({
       ) : null}
 
       {assistantContentBlocks.map((block) => (
-        <MessageBubble key={block.id} block={block} />
+        <MessageBubble
+          key={block.id}
+          block={block}
+          forkAction={
+            block.id === forkActionBlockId
+              ? {
+                  busy: forking,
+                  onFork: () => {
+                    void forkFromTurn()
+                  }
+                }
+              : undefined
+          }
+        />
       ))}
 
       {showLiveAssistant ? (
@@ -514,7 +589,7 @@ function MessageTurn({
         <ReviewSummaryCard key={review.id} review={review} />
       ))}
 
-      {isProcessing ? <LiveTurnProgressRow hasActiveGoal={Boolean(activeThreadGoal)} /> : null}
+      {showLiveProgress ? <LiveTurnProgressRow hasActiveGoal={Boolean(activeThreadGoal)} /> : null}
 
       {!isProcessing && devPreviewCard ? devPreviewCard : null}
 
@@ -531,6 +606,14 @@ function MessageTurn({
       {!isProcessing && turnFileChanges.length > 0 ? (
         <TurnChangeSummary changes={turnFileChanges} viewportRef={viewportRef} compact={compactCards} />
       ) : null}
+
+      {/* The compaction marker renders LAST so "已压缩上下文" sits at the very
+          bottom of the turn it belongs to — i.e. the bottom of the latest turn
+          when the compaction just happened — rather than wedged between the
+          user's question and the assistant's answer. */}
+      {compactionBlocks.map((block) => (
+        <CompactionDivider key={block.id} block={block} />
+      ))}
     </div>
   )
 }

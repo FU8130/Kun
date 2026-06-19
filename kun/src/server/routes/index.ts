@@ -19,6 +19,7 @@ import {
   compactTurn,
   getTurn,
   interruptTurn,
+  rewindThread,
   startTurn,
   steerTurn
 } from './turns.js'
@@ -126,7 +127,7 @@ export function buildRouter(runtime: ServerRuntime): Router {
   })
   router.add('DELETE', '/v1/memory/:id', async (request, ctx) => {
     if (!authorize(request, runtime)) return ERRORS.unauthorized()
-    return deleteMemory(runtime.memoryStore, ctx.params.id)
+    return deleteMemory(runtime.memoryStore, ctx.params.id, request)
   })
   router.add('GET', '/v1/workspace/status', async (request) => {
     if (!authorize(request, runtime)) return ERRORS.unauthorized()
@@ -187,6 +188,10 @@ export function buildRouter(runtime: ServerRuntime): Router {
     return startTurn(runtime.turnService, ctx.params.id, request, ({ threadId, turnId }) => {
       runtime.runTurn(threadId, turnId)
     })
+  })
+  router.add('POST', '/v1/threads/:id/rewind', async (request, ctx) => {
+    if (!authorize(request, runtime)) return ERRORS.unauthorized()
+    return rewindThread(runtime.turnService, ctx.params.id, request)
   })
   router.add('POST', '/v1/threads/:id/review', async (request, ctx) => {
     if (!authorize(request, runtime)) return ERRORS.unauthorized()

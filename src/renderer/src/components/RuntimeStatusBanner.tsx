@@ -29,22 +29,33 @@ export function RuntimeStatusBanner(): ReactElement | null {
           })
         : t('runtimeStatusRestarting')
       : t('runtimeStatusCrashed')
+  const tone = recoveredWithRollback ? 'warning' : 'info'
+  const bannerClass = recoveredWithRollback
+    ? 'border-amber-200/70 bg-[rgba(255,248,235,0.82)] dark:border-amber-800/50 dark:bg-amber-950/35'
+    : 'border-sky-200/70 bg-[rgba(239,248,255,0.82)] dark:border-sky-900/60 dark:bg-sky-950/30'
+  const iconClass = recoveredWithRollback
+    ? 'text-amber-700 dark:text-amber-300'
+    : 'text-sky-700 dark:text-sky-300'
+  const textClass = recoveredWithRollback
+    ? 'text-amber-950 dark:text-amber-100'
+    : 'text-sky-950 dark:text-sky-100'
   return (
-    <div className="ds-no-drag shrink-0 border-b border-amber-200/70 bg-[rgba(255,248,235,0.82)] backdrop-blur-lg dark:border-amber-800/50 dark:bg-amber-950/35">
+    <div
+      className={`ds-no-drag shrink-0 border-b backdrop-blur-lg ${bannerClass}`}
+      data-variant={tone}
+      role={recoveredWithRollback ? 'alert' : 'status'}
+    >
       <div className="flex w-full min-w-0 items-center gap-2 px-4 py-1.5">
         {recoveredWithRollback ? (
-          <AlertTriangle
-            className="h-3.5 w-3.5 shrink-0 text-amber-700 dark:text-amber-300"
-            strokeWidth={2}
-          />
+          <AlertTriangle className={`h-3.5 w-3.5 shrink-0 ${iconClass}`} strokeWidth={2} />
         ) : (
           <Loader2
-            className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-700 dark:text-amber-300"
+            className={`h-3.5 w-3.5 shrink-0 animate-spin ${iconClass}`}
             strokeWidth={2}
           />
         )}
         <p
-          className="min-w-0 flex-1 truncate text-[12.5px] leading-5 text-amber-950 dark:text-amber-100"
+          className={`min-w-0 flex-1 truncate text-[12.5px] leading-5 ${textClass}`}
           title={status.message ?? label}
         >
           {label}

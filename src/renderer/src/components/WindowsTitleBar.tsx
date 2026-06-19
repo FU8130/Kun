@@ -72,7 +72,7 @@ export function supportsDesktopTitleBar(platform: string): boolean {
 export function buildWindowsTitleBarMenuSections(
   t: TitleBarTranslate,
   actions: WindowsTitleBarActions,
-  shortcuts: Required<KeyboardShortcutBindingsV1> = resolveKeyboardShortcutBindings()
+  shortcuts: Required<KeyboardShortcutBindingsV1> = resolveKeyboardShortcutBindings(undefined, currentPlatform())
 ): WindowsTitleBarMenuSection[] {
   const command = (desktopCommand: DesktopCommand): MenuAction =>
     () => actions.runDesktopCommand(desktopCommand)
@@ -182,8 +182,8 @@ export function WindowsTitleBar({ platform, actions }: Props): ReactElement | nu
   const openSettings = useChatStore((s) => s.openSettings)
   const keyboardShortcuts = useKeyboardShortcutSettings()
   const keyboardShortcutBindings = useMemo(
-    () => resolveKeyboardShortcutBindings(keyboardShortcuts),
-    [keyboardShortcuts]
+    () => resolveKeyboardShortcutBindings(keyboardShortcuts, resolvedPlatform),
+    [keyboardShortcuts, resolvedPlatform]
   )
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null)
   const [isMaximized, setIsMaximized] = useState(false)
@@ -277,7 +277,7 @@ export function WindowsTitleBar({ platform, actions }: Props): ReactElement | nu
   }
 
   return (
-    <div ref={rootRef} className="ds-windows-titlebar ds-drag">
+    <div ref={rootRef} data-cursor-spotlight-target className="ds-windows-titlebar ds-drag">
       <div className="ds-windows-titlebar-content">
         <img src={kunLogo} alt="" aria-hidden="true" className="ds-windows-titlebar-icon" />
         <nav className="ds-windows-menu ds-no-drag" aria-label={t('windowsMenuAriaLabel')}>
@@ -287,6 +287,7 @@ export function WindowsTitleBar({ platform, actions }: Props): ReactElement | nu
               <div key={menu.id} className="ds-windows-menu-slot">
                 <button
                   type="button"
+                  data-cursor-spotlight-target
                   className={`ds-windows-menu-button ${open ? 'is-open' : ''}`}
                   aria-haspopup="menu"
                   aria-expanded={open}
@@ -307,6 +308,7 @@ export function WindowsTitleBar({ platform, actions }: Props): ReactElement | nu
                         <button
                           key={item.id}
                           type="button"
+                          data-cursor-spotlight-target
                           role="menuitem"
                           className="ds-windows-menu-item"
                           onClick={() => runMenuAction(item)}
@@ -326,6 +328,7 @@ export function WindowsTitleBar({ platform, actions }: Props): ReactElement | nu
       <div className="ds-window-controls ds-no-drag">
         <button
           type="button"
+          data-cursor-spotlight-target
           className="ds-window-control-btn"
           aria-label={t('windowsMenuMinimize')}
           onClick={handleMinimize}
@@ -334,6 +337,7 @@ export function WindowsTitleBar({ platform, actions }: Props): ReactElement | nu
         </button>
         <button
           type="button"
+          data-cursor-spotlight-target
           className="ds-window-control-btn"
           aria-label={t('windowsMenuToggleMaximize')}
           onClick={handleToggleMaximize}
@@ -342,6 +346,7 @@ export function WindowsTitleBar({ platform, actions }: Props): ReactElement | nu
         </button>
         <button
           type="button"
+          data-cursor-spotlight-target
           className="ds-window-control-btn ds-window-control-btn--close"
           aria-label={t('windowsMenuClose')}
           onClick={handleClose}

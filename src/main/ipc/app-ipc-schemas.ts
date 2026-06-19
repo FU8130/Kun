@@ -18,6 +18,7 @@ import {
   KUN_THREAD_FORK_TEMPLATE,
   KUN_THREAD_GOAL_TEMPLATE,
   KUN_THREAD_REVIEW_TEMPLATE,
+  KUN_THREAD_REWIND_TEMPLATE,
   KUN_THREAD_TODOS_TEMPLATE,
   KUN_THREAD_INTERRUPT_TEMPLATE,
   KUN_THREAD_STEER_TEMPLATE,
@@ -159,6 +160,7 @@ const ENDPOINTS: readonly EndpointTemplate[] = [
   compileEndpoint(KUN_THREAD_TODOS_TEMPLATE, ['GET', 'POST', 'DELETE']),
   compileEndpoint(KUN_THREAD_COMPACT_TEMPLATE, ['POST']),
   compileEndpoint(KUN_THREAD_REVIEW_TEMPLATE, ['POST']),
+  compileEndpoint(KUN_THREAD_REWIND_TEMPLATE, ['POST']),
   compileEndpoint(KUN_THREAD_TURNS_TEMPLATE, ['POST']),
   compileEndpoint(KUN_THREAD_STEER_TEMPLATE, ['POST']),
   compileEndpoint(KUN_THREAD_INTERRUPT_TEMPLATE, ['POST']),
@@ -253,13 +255,21 @@ const modelProfilePatchSchema = z.object({
 const modelProviderPatchSchema = z.object({
   apiKey: z.string().max(MAX_BODY_BYTES).optional(),
   baseUrl: z.string().trim().max(MAX_URL_LENGTH).optional(),
+  proxy: z.object({
+    enabled: z.boolean().optional(),
+    url: z.string().trim().max(MAX_URL_LENGTH).optional()
+  }).strict().optional(),
   providers: z.array(z.object({
     id: z.string().trim().min(1).max(64).optional(),
     name: z.string().trim().min(1).max(80).optional(),
     apiKey: z.string().max(MAX_BODY_BYTES).optional(),
     baseUrl: z.string().trim().max(MAX_URL_LENGTH).optional(),
     endpointFormat: modelEndpointFormatSchema.optional(),
-    models: z.array(z.string().trim().min(1).max(128)).max(200).optional(),
+    // Some third-party aggregators (litellm, oneapi, …) advertise 500+ chat
+    // models in a single /v1/models response. The previous 200/50 caps caused
+    // settings:set to silently fail with no toast (#397). Raised to leave
+    // plenty of headroom while still bounding pathological payloads.
+    models: z.array(z.string().trim().min(1).max(128)).max(2000).optional(),
     // 兼容旧版保存的视觉识别能力字段。当前能力已经迁移到 modelProfiles 的 inputModalities/messageParts。
     imageRecognition: z.unknown().optional(),
     modelProfiles: z.record(
@@ -269,27 +279,27 @@ const modelProviderPatchSchema = z.object({
     image: z.object({
       protocol: imageGenerationProtocolSchema.optional(),
       baseUrl: z.string().trim().max(MAX_URL_LENGTH).optional(),
-      models: z.array(z.string().trim().min(1).max(128)).max(50).optional()
+      models: z.array(z.string().trim().min(1).max(128)).max(500).optional()
     }).strict().nullable().optional(),
     speech: z.object({
       protocol: speechToTextProtocolSchema.optional(),
       baseUrl: z.string().trim().max(MAX_URL_LENGTH).optional(),
-      models: z.array(z.string().trim().min(1).max(128)).max(50).optional()
+      models: z.array(z.string().trim().min(1).max(128)).max(500).optional()
     }).strict().nullable().optional(),
     textToSpeech: z.object({
       protocol: textToSpeechProtocolSchema.optional(),
       baseUrl: z.string().trim().max(MAX_URL_LENGTH).optional(),
-      models: z.array(z.string().trim().min(1).max(128)).max(50).optional()
+      models: z.array(z.string().trim().min(1).max(128)).max(500).optional()
     }).strict().nullable().optional(),
     music: z.object({
       protocol: musicGenerationProtocolSchema.optional(),
       baseUrl: z.string().trim().max(MAX_URL_LENGTH).optional(),
-      models: z.array(z.string().trim().min(1).max(128)).max(50).optional()
+      models: z.array(z.string().trim().min(1).max(128)).max(500).optional()
     }).strict().nullable().optional(),
     video: z.object({
       protocol: videoGenerationProtocolSchema.optional(),
       baseUrl: z.string().trim().max(MAX_URL_LENGTH).optional(),
-      models: z.array(z.string().trim().min(1).max(128)).max(50).optional()
+      models: z.array(z.string().trim().min(1).max(128)).max(500).optional()
     }).strict().nullable().optional()
   }).strict()).max(50).optional()
 }).strict()
@@ -1193,7 +1203,6 @@ function stripLegacySettingsPatchKeys(payload: unknown): unknown {
 
   delete next.agentProvider
   delete next.deepseek
-  delete next.disabledSkillIds
   delete next.reasonix
   delete next.quickChat
 
@@ -1213,6 +1222,7 @@ const settingsPatchObjectSchema = z.object({
   locale: localeSchema.optional(),
   theme: themeSchema.optional(),
   uiFontScale: uiFontScaleSchema.optional(),
+  cursorSpotlight: z.boolean().optional(),
   provider: modelProviderPatchSchema.optional(),
   agents: z.object({
     kun: kunRuntimePatchSchema.optional()
@@ -1260,6 +1270,19 @@ export const gitBranchPayloadSchema = z
   })
   .strict()
 
+export const gitCheckpointCreatePayloadSchema = z
+  .object({
+    workspaceRoot: workspaceRootSchema,
+    threadId: trimmedString(MAX_ID_LENGTH)
+  })
+  .strict()
+
+export const gitCheckpointRestorePayloadSchema = z
+  .object({
+    checkpointId: trimmedString(MAX_ID_LENGTH * 4)
+  })
+  .strict()
+
 export const worktreeOptionalRootSchema = z.object({
   projectPath: trimmedString(MAX_PATH_LENGTH),
   poolIndex: z.number().int().min(0).max(2),
@@ -1287,6 +1310,11 @@ export const worktreeMergeSchema = z.object({
 }).strict()
 
 export const worktreePathSchema = z.object({
+  worktreePath: trimmedString(MAX_PATH_LENGTH)
+}).strict()
+
+export const gitWorktreeRemoveSchema = z.object({
+  workspaceRoot: workspaceRootSchema,
   worktreePath: trimmedString(MAX_PATH_LENGTH)
 }).strict()
 

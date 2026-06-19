@@ -3,6 +3,7 @@ import type { AppSettingsV1 } from '@shared/app-settings'
 import { rendererRuntimeClient } from '../agent/runtime-client'
 import type { ChatState, ChatStoreGet, ChatStoreSet, InitialSetupMode, PluginHostRoute, SettingsRouteSection } from './chat-store-types'
 import {
+  canSwitchComposerModel,
   composerModelSelectable,
   persistComposerProviderId,
   providerIdForComposerModel,
@@ -24,6 +25,7 @@ type CreateAppActionsOptions = {
   setComposerModelLoadPromise: (promise: Promise<void> | null) => void
   applyTheme: (theme: AppSettingsV1['theme']) => void
   applyUiFontScale: (scale: AppSettingsV1['uiFontScale']) => void
+  applyCursorSpotlight: (enabled: boolean) => void
   applyWriteTypography: (typography: AppSettingsV1['write']['typography']) => void
   applyDocumentLocale: (locale: AppSettingsV1['locale']) => void
   workspaceLabelFromPath: (workspaceRoot: string) => string
@@ -60,6 +62,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
     setComposerModelLoadPromise,
     applyTheme,
     applyUiFontScale,
+    applyCursorSpotlight,
     applyWriteTypography,
     applyDocumentLocale,
     workspaceLabelFromPath,
@@ -71,7 +74,22 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
 
     setComposerModel: (modelId, providerId) => {
       const nextProviderId = providerId?.trim() || providerIdForComposerModel(get().composerModelGroups, modelId)
-      const activeThreadId = get().activeThreadId
+      const state = get()
+      const lockVisionToTextSwitch =
+        state.route === 'chat' &&
+        Array.isArray(state.blocks) &&
+        state.blocks.some((block) => block.kind === 'user')
+      if (!canSwitchComposerModel(
+        lockVisionToTextSwitch,
+        state.composerModelGroups,
+        state.composerModel,
+        state.composerProviderId,
+        modelId,
+        nextProviderId
+      )) {
+        return
+      }
+      const activeThreadId = state.activeThreadId
       if (activeThreadId) {
         rememberThreadComposerSelection(activeThreadId, modelId, nextProviderId)
       } else {
@@ -193,6 +211,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       const workspaceRoot = normalizeWorkspaceRoot(settings.workspaceRoot)
       applyTheme(settings.theme)
       applyUiFontScale(settings.uiFontScale)
+      applyCursorSpotlight(settings.cursorSpotlight !== false)
       if (settings.write?.typography) applyWriteTypography(settings.write.typography)
       set({
         workspaceRoot,

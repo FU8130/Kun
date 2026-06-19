@@ -1,6 +1,8 @@
 import type { LarkChannel, MarkdownStreamController, SendOptions } from '@larksuiteoapi/node-sdk'
 import type { SseSubscriber } from './claw-runtime-helpers'
 
+export type { SseSubscriber } from './claw-runtime-helpers'
+
 export type FeishuStreamLogger = (category: string, message: string, detail?: unknown) => void
 
 export type FeishuStreamerOptions = {

@@ -221,6 +221,23 @@ describe('ThreadService.fork with side relation', () => {
     expect(fork.title).toBe('Forker fork')
   })
 
+  it('forks history through a requested turn only', async () => {
+    const { service, sessionStore, threadStore, nowIso } = buildService()
+    await seedParentWithTurns(service, threadStore, sessionStore, nowIso, {
+      parentId: 'thr_branch',
+      inflight: true
+    })
+
+    const fork = await service.fork('thr_branch', { turnId: 'turn_completed' })
+    const forkItems = await sessionStore.loadItems(fork.id)
+
+    expect(fork.turns.map((turn) => turn.id)).toEqual(['turn_completed'])
+    expect(forkItems.map((item) => item.id)).toEqual(['item_user_1', 'item_a_1'])
+    expect(fork.forkedFromThreadId).toBe('thr_branch')
+    expect(fork.forkedFromTurnCount).toBe(1)
+    expect(fork.forkedFromMessageCount).toBe(1)
+  })
+
   it('repairs malformed tool-call history when cloning a fork', async () => {
     const { service, threadStore, sessionStore, nowIso } = buildService()
     await service.create(

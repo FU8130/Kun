@@ -1,8 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { homedir } from 'node:os'
 import type { KunGuiApi } from '../shared/kun-gui-api'
 
 const api = {
   platform: process.platform,
+  homeDir: homedir(),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (partial) =>
     ipcRenderer.invoke('settings:set', partial),
@@ -71,6 +73,18 @@ const api = {
     ipcRenderer.invoke('git:switch-branch', { workspaceRoot, branch }),
   createAndSwitchGitBranch: (workspaceRoot, branch) =>
     ipcRenderer.invoke('git:create-and-switch-branch', { workspaceRoot, branch }),
+  createGitCheckpoint: (payload) =>
+    ipcRenderer.invoke('git:checkpoint:create', payload),
+  restoreGitCheckpoint: (payload) =>
+    ipcRenderer.invoke('git:checkpoint:restore', payload),
+  checkoutGitBranchWorktree: (workspaceRoot, branch) =>
+    ipcRenderer.invoke('git:checkout-branch-worktree', { workspaceRoot, branch }),
+  createGitBranchWorktree: (workspaceRoot, branch) =>
+    ipcRenderer.invoke('git:create-branch-worktree', { workspaceRoot, branch }),
+  listGitBranchWorktrees: (params) =>
+    ipcRenderer.invoke('git:branch-worktrees', params),
+  removeGitBranchWorktree: (params) =>
+    ipcRenderer.invoke('git:remove-branch-worktree', params),
   acquireWorktree: (params) =>
     ipcRenderer.invoke('worktree:acquire', params),
   releaseWorktree: (params) =>
@@ -194,6 +208,14 @@ const api = {
     ) => handler(payload)
     ipcRenderer.on('claw:channel-activity', wrapped)
     return () => ipcRenderer.removeListener('claw:channel-activity', wrapped)
+  },
+  onTrayAction: (handler) => {
+    const wrapped = (
+      _: Electron.IpcRendererEvent,
+      payload: Parameters<typeof handler>[0]
+    ) => handler(payload)
+    ipcRenderer.on('tray:action', wrapped)
+    return () => ipcRenderer.removeListener('tray:action', wrapped)
   },
   onRuntimeStatus: (handler) => {
     const wrapped = (

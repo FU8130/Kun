@@ -20,7 +20,7 @@ export const TERMINAL_MAX_ROWS = 200
 export const TERMINAL_MAIN_SESSION_ID = 'main'
 
 export type TerminalCreatePayload = {
-  /** Stable session identifier. The workbench uses a single `main` session. */
+  /** 稳定的 PTY 会话标识,渲染端会按工作区和标签页生成命名空间。 */
   sessionId: string
   /** Working directory for the spawned shell. Defaults to the OS home dir. */
   cwd?: string

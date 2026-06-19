@@ -3,6 +3,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
   FloatingComposer,
+  buildResearchPrompt,
   formatGoalElapsedSeconds,
   handleComposerImagePaste,
   imageFilesFromTransfer,
@@ -10,6 +11,7 @@ import {
   parseCompactCommand,
   parseGoalCommand,
   parseNewCommand,
+  parseResearchCommand,
   parseReviewCommand,
   shouldShowGoalFloater
 } from './FloatingComposer'
@@ -21,11 +23,14 @@ import {
   composerModelMenuItemSelected,
   composerMenuSupportsModel,
   composerReasoningEffortRequestValue,
+  canSwitchComposerModelFromCurrent,
   filterComposerModelIds,
   normalizeComposerReasoningEffort
 } from './FloatingComposerModelPicker'
+import { FloatingComposerExecutionPicker } from './FloatingComposerExecutionPicker'
 import { getGoalPanelDraftObjective } from './floating-composer-commands'
 import { useChatStore } from '../../store/chat-store'
+import i18n from '../../i18n'
 import {
   buildComposerFileContextPrompt,
   filterWorkspaceFileMentionSuggestions,
@@ -95,6 +100,15 @@ describe('FloatingComposer slash commands', () => {
       instructions: 'focus on auth regressions'
     })
     expect(parseReviewCommand('/reviewer')).toBe(false)
+  })
+
+  it('parses research topics and fills the research brief', () => {
+    expect(parseResearchCommand('/research')).toBeNull()
+    expect(parseResearchCommand('/deepresearch cache economics')).toBe('cache economics')
+    expect(parseResearchCommand('/deep-research web + papers')).toBe('web + papers')
+    expect(parseResearchCommand('/researcher')).toBe(false)
+    expect(buildResearchPrompt('Topic: {{topic}}', 'provider cache')).toBe('Topic: provider cache')
+    expect(buildResearchPrompt('Topic: {{topic}}', null)).toBe('Topic: {{topic}}')
   })
 
   it('uses ordinary composer text as a goal draft only when the goal panel is open', () => {
@@ -436,6 +450,25 @@ describe('FloatingComposer model controls', () => {
     expect(filterComposerModelIds(modelIds, '128K')).toEqual(['moonshot-v1-128k'])
   })
 
+  it('prevents switching from a vision model to a text-only model', () => {
+    const visionProfile: Parameters<typeof canSwitchComposerModelFromCurrent>[0] = {
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      supportsToolCalling: true,
+      messageParts: ['text', 'image_url']
+    }
+    const textProfile: Parameters<typeof canSwitchComposerModelFromCurrent>[1] = {
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+      supportsToolCalling: true,
+      messageParts: ['text']
+    }
+
+    expect(canSwitchComposerModelFromCurrent(visionProfile, textProfile)).toBe(false)
+    expect(canSwitchComposerModelFromCurrent(visionProfile, visionProfile)).toBe(true)
+    expect(canSwitchComposerModelFromCurrent(textProfile, visionProfile)).toBe(true)
+  })
+
   it('keeps the reasoning strength visible in the model control', () => {
     const html = renderToStaticMarkup(
       createElement(FloatingComposerModelPicker, {
@@ -635,6 +668,34 @@ describe('FloatingComposer image transfer helpers', () => {
 })
 
 describe('FloatingComposer capability controls', () => {
+  it('renders localized execution values in Chinese without visible category prefixes', async () => {
+    const previousLanguage = i18n.language
+    await i18n.changeLanguage('zh')
+
+    try {
+      const html = renderToStaticMarkup(
+        createElement(FloatingComposerExecutionPicker, {
+          value: {
+            approvalPolicy: 'auto',
+            sandboxMode: 'danger-full-access'
+          },
+          onChange: () => undefined
+        })
+      )
+
+      expect(html).toContain('自动执行')
+      expect(html).toContain('访问所有文件')
+      expect(html).not.toContain('>审批<')
+      expect(html).not.toContain('>权限<')
+      expect(html).toContain('aria-label="审批"')
+      expect(html).toContain('aria-label="权限"')
+      expect(html).not.toContain('Full access')
+      expect(html).not.toContain('Auto')
+    } finally {
+      await i18n.changeLanguage(previousLanguage)
+    }
+  })
+
   it('enables goal setup before a thread exists when a workspace is available', () => {
     useChatStore.setState({
       activeThreadId: null,
@@ -1121,7 +1182,7 @@ describe('FloatingComposer capability controls', () => {
     expect(html).not.toContain('aria-label="Send" disabled=""')
   })
 
-  it('hides execution access controls in the composer footer', () => {
+  it('shows execution access controls beside the composer menu', () => {
     useChatStore.setState({
       activeThreadId: 'thr_1',
       activeThreadGoal: null,
@@ -1155,8 +1216,13 @@ describe('FloatingComposer capability controls', () => {
       })
     )
 
-    expect(html).not.toContain('Full access')
-    expect(html).not.toContain('aria-label="Execution"')
+    expect(html).toContain('Approval')
+    expect(html).toContain('Auto')
+    expect(html).toContain('Full access')
+    expect(html).not.toContain('>Approval<')
+    expect(html).not.toContain('>Access<')
+    expect(html).toContain('aria-label="Approval"')
+    expect(html).toContain('aria-label="Access"')
   })
 
   it('renders a changed-file review card above the input', () => {

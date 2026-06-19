@@ -175,6 +175,10 @@ export function AgentsSettingsSection({ ctx }: { ctx: Record<string, any> }): Re
     logPath,
     logDirOpenError,
     setLogDirOpenError,
+    compactHomePath,
+    expandHomePath,
+    compactHomePathList,
+    expandHomePathList,
     pickWriteWorkspace,
     resetWriteWorkspaceToDefault,
     writeWorkspacePickerError,
@@ -278,7 +282,7 @@ export function AgentsSettingsSection({ ctx }: { ctx: Record<string, any> }): Re
   const contextCompaction = kun.contextCompaction ?? {
     defaultSoftThreshold: 16000,
     defaultHardThreshold: 24000,
-    summaryMode: 'heuristic',
+    summaryMode: 'model',
     summaryTimeoutMs: 15000,
     summaryMaxTokens: 1200,
     summaryInputMaxBytes: 98304
@@ -518,8 +522,8 @@ export function AgentsSettingsSection({ ctx }: { ctx: Record<string, any> }): Re
                       <input
                         className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30 md:max-w-md"
                         placeholder={t('kunBinaryPlaceholder')}
-                        value={kun.binaryPath}
-                        onChange={(e) => updateKun({ binaryPath: e.target.value })}
+                        value={compactHomePath(kun.binaryPath)}
+                        onChange={(e) => updateKun({ binaryPath: expandHomePath(e.target.value) })}
                       />
                     }
                   />
@@ -530,8 +534,8 @@ export function AgentsSettingsSection({ ctx }: { ctx: Record<string, any> }): Re
                       <input
                         className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30 md:max-w-md"
                         placeholder={DEFAULT_KUN_DATA_DIR}
-                        value={kun.dataDir}
-                        onChange={(e) => updateKun({ dataDir: e.target.value })}
+                        value={compactHomePath(kun.dataDir)}
+                        onChange={(e) => updateKun({ dataDir: expandHomePath(e.target.value) })}
                       />
                     }
                   />
@@ -762,7 +766,7 @@ export function AgentsSettingsSection({ ctx }: { ctx: Record<string, any> }): Re
                                   )}
                                 </div>
                                 <code className="mt-1 block break-all font-mono text-[12px] text-ds-muted">
-                                  {root.path}
+                                  {compactHomePath(root.path)}
                                 </code>
                               </div>
                               <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
@@ -789,12 +793,12 @@ export function AgentsSettingsSection({ ctx }: { ctx: Record<string, any> }): Re
                     wideControl
                     control={
                       <textarea
-                        value={listSettingsText(form.claw.skills.extraDirs)}
+                        value={compactHomePathList(form.claw.skills.extraDirs)}
                         onChange={(event) =>
                           update({
                             claw: {
                               skills: {
-                                extraDirs: splitSettingsList(event.target.value)
+                                extraDirs: expandHomePathList(splitSettingsList(event.target.value))
                               }
                             }
                           })
@@ -941,7 +945,7 @@ export function AgentsSettingsSection({ ctx }: { ctx: Record<string, any> }): Re
                     control={
                       <div className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[13px] text-ds-muted shadow-sm">
                         <code className="block break-all rounded-lg bg-ds-main/70 px-2 py-1 font-mono text-[12px] text-ds-ink">
-                          {mcpConfigPath}
+                          {compactHomePath(mcpConfigPath)}
                         </code>
                       </div>
                     }
@@ -1201,10 +1205,10 @@ export function AgentsSettingsSection({ ctx }: { ctx: Record<string, any> }): Re
                     control={
                       <input
                         className="w-full min-w-0 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30 md:max-w-md"
-                        value={storage.sqlitePath}
+                        value={compactHomePath(storage.sqlitePath)}
                         disabled={storage.backend !== 'hybrid'}
                         placeholder={t('kunStorageSqlitePathPlaceholder')}
-                        onChange={(e) => updateStorage({ sqlitePath: e.target.value })}
+                        onChange={(e) => updateStorage({ sqlitePath: expandHomePath(e.target.value) })}
                       />
                     }
                   />

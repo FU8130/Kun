@@ -99,7 +99,7 @@ describe('ArchivedThreadsSettingsSection', () => {
     expect(html).toContain('Delete archived chat')
   })
 
-  it('places archived chats directly after the AI assistant settings tab', () => {
+  it('places permissions directly after the AI assistant settings tab', () => {
     const html = renderToStaticMarkup(createElement(SettingsSidebar, {
       category: 'archives',
       goBack: () => undefined,
@@ -111,7 +111,23 @@ describe('ArchivedThreadsSettingsSection', () => {
     const archivesIndex = html.indexOf('Archived chats')
     const permissionsIndex = html.indexOf('permissions')
     expect(agentsIndex).toBeGreaterThanOrEqual(0)
-    expect(archivesIndex).toBeGreaterThan(agentsIndex)
-    expect(permissionsIndex).toBeGreaterThan(archivesIndex)
+    expect(permissionsIndex).toBeGreaterThan(agentsIndex)
+    expect(archivesIndex).toBeGreaterThan(permissionsIndex)
+    expect(html.match(/data-cursor-spotlight-target/g)?.length).toBe(16)
+  })
+
+  it('keeps settings tabs scrollable without pushing the footer away', () => {
+    const html = renderToStaticMarkup(createElement(SettingsSidebar, {
+      category: 'shortcuts',
+      goBack: () => undefined,
+      setCategory: () => undefined,
+      t
+    }))
+
+    expect(html).toContain('flex h-full min-h-0 w-[248px]')
+    expect(html).toContain('flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain')
+    expect(html).toContain('ds-no-drag shrink-0 border-t border-ds-border p-3')
+    expect(html).toContain('Kun')
+    expect(html).toContain('Settings')
   })
 })

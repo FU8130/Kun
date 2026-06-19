@@ -12,6 +12,7 @@ vi.mock('../agent/registry', () => ({
 }))
 
 const applyThemeLibMock = vi.hoisted(() => ({
+  applyCursorSpotlight: vi.fn(),
   applyTheme: vi.fn(),
   applyUiFontScale: vi.fn(),
   applyDocumentLocale: vi.fn()
@@ -209,6 +210,11 @@ describe('onClawChannelActivity routes through subscribeThreadEventsLive (not se
       return () => {}
     })
     const onRuntimeStatus = vi.fn(() => () => {})
+    let capturedTrayActionCallback: ((payload: { type: 'new-chat' } | { type: 'open-thread'; threadId: string }) => void) | null = null
+    const onTrayAction = vi.fn((cb: typeof capturedTrayActionCallback) => {
+      capturedTrayActionCallback = cb
+      return () => {}
+    })
     const getSettings = vi.fn(async () => ({
       workspaceRoot: '~/.kun/default_workspace',
       write: {
@@ -231,6 +237,7 @@ describe('onClawChannelActivity routes through subscribeThreadEventsLive (not se
       kunGui: {
         getSettings,
         onClawChannelActivity,
+        onTrayAction,
         onRuntimeStatus
       }
     })
@@ -239,6 +246,17 @@ describe('onClawChannelActivity routes through subscribeThreadEventsLive (not se
     await harness.actions.boot()
     expect(typeof capturedClawActivityCallback).toBe('function')
     expect(onClawChannelActivity).toHaveBeenCalledTimes(1)
+    expect(onTrayAction).toHaveBeenCalledTimes(1)
+
+    harness.state.route = 'settings'
+    capturedTrayActionCallback!({ type: 'open-thread', threadId: 'thr_recent' })
+    expect(harness.state.route).toBe('chat')
+    expect(harness.selectThread).toHaveBeenCalledWith('thr_recent')
+
+    harness.state.route = 'settings'
+    capturedTrayActionCallback!({ type: 'new-chat' })
+    expect(harness.state.route).toBe('chat')
+    expect(harness.createThread).toHaveBeenCalledWith({ forceNew: true })
 
     // Set state conditions AFTER boot so they survive the boot's set() calls:
     // route is claw, activeClawChannelId matches incoming channelId,

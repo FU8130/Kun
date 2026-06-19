@@ -41,6 +41,9 @@ import {
   desktopCommandSchema,
   defaultPathSchema,
   gitBranchPayloadSchema,
+  gitCheckpointCreatePayloadSchema,
+  gitCheckpointRestorePayloadSchema,
+  gitWorktreeRemoveSchema,
   guiUpdateChannelSchema,
   logErrorPayloadSchema,
   notificationPayloadSchema,
@@ -95,7 +98,16 @@ import type { ClawRuntime } from '../claw-runtime'
 import type { ScheduleRuntime } from '../schedule-runtime'
 import type { WorkflowRuntime } from '../workflow-runtime'
 import { checkWorkflowCode } from '../workflow-runtime'
-import { createAndSwitchGitBranch, getGitBranches, switchGitBranch } from '../services/git-service'
+import {
+  checkoutGitBranchWorktree,
+  createAndSwitchGitBranch,
+  createGitBranchWorktree,
+  getGitBranches,
+  listGitBranchWorktrees,
+  removeGitBranchWorktree,
+  switchGitBranch
+} from '../services/git-service'
+import { createGitCheckpoint, restoreGitCheckpoint } from '../services/git-checkpoint-service'
 import {
   abortMerge,
   abortRebase,
@@ -476,7 +488,7 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
 
   ipcMain.handle('provider:probe', async (_, payload: unknown) => {
     const request = parseIpcPayload('provider:probe', providerProbePayloadSchema, payload)
-    return probeModelProvider(request)
+    return probeModelProvider(request, await store.load())
   })
 
   ipcMain.handle('claw:status', async (): Promise<ClawRuntimeStatus> =>
@@ -906,6 +918,43 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       return createAndSwitchGitBranch(request.workspaceRoot, request.branch)
     }
   )
+  ipcMain.handle('git:checkpoint:create', async (_, payload: unknown) => {
+    const request = parseIpcPayload('git:checkpoint:create', gitCheckpointCreatePayloadSchema, payload)
+    return createGitCheckpoint({
+      dataDir: await resolveKunThreadsDataDir(),
+      workspaceRoot: request.workspaceRoot,
+      threadId: request.threadId
+    })
+  })
+  ipcMain.handle('git:checkpoint:restore', async (_, payload: unknown) => {
+    const request = parseIpcPayload('git:checkpoint:restore', gitCheckpointRestorePayloadSchema, payload)
+    return restoreGitCheckpoint({
+      dataDir: await resolveKunThreadsDataDir(),
+      checkpointId: request.checkpointId
+    })
+  })
+  ipcMain.handle(
+    'git:checkout-branch-worktree',
+    async (_, payload: unknown) => {
+      const request = parseIpcPayload('git:checkout-branch-worktree', gitBranchPayloadSchema, payload)
+      return checkoutGitBranchWorktree(request.workspaceRoot, request.branch)
+    }
+  )
+  ipcMain.handle(
+    'git:create-branch-worktree',
+    async (_, payload: unknown) => {
+      const request = parseIpcPayload('git:create-branch-worktree', gitBranchPayloadSchema, payload)
+      return createGitBranchWorktree(request.workspaceRoot, request.branch)
+    }
+  )
+  ipcMain.handle('git:branch-worktrees', async (_, payload: unknown) => {
+    const request = parseIpcPayload('git:branch-worktrees', worktreePoolSchema, payload)
+    return listGitBranchWorktrees(request.projectPath, request.worktreeRoot)
+  })
+  ipcMain.handle('git:remove-branch-worktree', async (_, payload: unknown) => {
+    const request = parseIpcPayload('git:remove-branch-worktree', gitWorktreeRemoveSchema, payload)
+    return removeGitBranchWorktree(request)
+  })
 
   // Worktree pool management
   ipcMain.handle('worktree:acquire', async (_, payload: unknown) => {

@@ -11,6 +11,7 @@ import {
 } from '../src/contracts/capabilities.js'
 import { modelCapabilitiesForModel } from '../src/loop/model-context-profile.js'
 import type { ModelClient, ModelRequest } from '../src/ports/model-client.js'
+import type { LocalTool } from '../src/adapters/tool/local-tool-host.js'
 import { dispatchRequest } from '../src/server/http-server.js'
 import { bootstrapThread, makeHarness } from './loop-test-harness.js'
 import { buildHarness, readJson } from './http-server-test-harness.js'
@@ -173,12 +174,14 @@ describe('Attachment store and multimodal input', () => {
 
   it('resolves image attachments for vision models and text fallbacks for text-only models', async () => {
     const store = createStore()
+    const workspace = join(dir, 'workspace')
+    const localFilePath = join(workspace, 'assets', 'shot.png')
     const attachment = await store.create({
       name: 'shot.png',
       data: png(1, 1),
-      localFilePath: '/tmp/picked/shot.png',
+      localFilePath,
       threadId: 'thr_1',
-      workspace: '/tmp/ws'
+      workspace
     })
     const seenRequests: ModelRequest[] = []
     const model: ModelClient = {
@@ -191,10 +194,11 @@ describe('Attachment store and multimodal input', () => {
     }
     const h = makeHarness(model, {
       attachmentStore: store,
-      modelCapabilities: () => visionCapabilities()
+      modelCapabilities: () => visionCapabilities(),
+      tools: [generateImageTool()]
     })
     await bootstrapThread(h, {
-      workspace: '/tmp/ws',
+      workspace,
       request: { prompt: 'look', attachmentIds: [attachment.id], model: 'vision-model' }
     })
 
@@ -203,15 +207,18 @@ describe('Attachment store and multimodal input', () => {
     expect(seenRequests.at(-1)?.attachments?.[0]).toMatchObject({
       id: attachment.id,
       mimeType: 'image/png',
-      dataBase64: expect.any(String)
+      dataBase64: expect.any(String),
+      localFilePath
     })
+    expect(seenRequests.at(-1)?.contextInstructions?.join('\n')).toContain('reference_image_paths')
+    expect(seenRequests.at(-1)?.contextInstructions?.join('\n')).toContain('assets/shot.png')
 
     const textOnly = makeHarness(model, {
       attachmentStore: store,
       modelCapabilities: () => ({ ...visionCapabilities(), inputModalities: ['text'] })
     })
     await bootstrapThread(textOnly, {
-      workspace: '/tmp/ws',
+      workspace,
       request: { prompt: 'look', attachmentIds: [attachment.id], model: 'text-only' }
     })
     expect(await textOnly.loop.runTurn(textOnly.threadId, textOnly.turnId)).toBe('completed')
@@ -220,9 +227,46 @@ describe('Attachment store and multimodal input', () => {
       id: attachment.id,
       mimeType: 'image/png',
       dataBase64: expect.any(String),
-      localFilePath: '/tmp/picked/shot.png',
+      localFilePath,
       wasCompressed: false
     })
+    expect(seenRequests.at(-1)?.contextInstructions?.join('\n') ?? '').not.toContain('reference_image_paths')
+  })
+
+  it('does not expose image reference paths outside the active workspace', async () => {
+    const store = createStore()
+    const workspace = join(dir, 'workspace')
+    const localFilePath = join(dir, 'outside', 'secret.png')
+    const attachment = await store.create({
+      name: 'secret.png',
+      data: png(1, 1),
+      localFilePath,
+      threadId: 'thr_1',
+      workspace
+    })
+    const seenRequests: ModelRequest[] = []
+    const model: ModelClient = {
+      provider: 'fake',
+      model: 'fake',
+      async *stream(request) {
+        seenRequests.push(request)
+        yield { kind: 'completed', stopReason: 'stop' }
+      }
+    }
+    const h = makeHarness(model, {
+      attachmentStore: store,
+      modelCapabilities: () => visionCapabilities(),
+      tools: [generateImageTool()]
+    })
+    await bootstrapThread(h, {
+      workspace,
+      request: { prompt: 'look', attachmentIds: [attachment.id], model: 'vision-model' }
+    })
+
+    expect(await h.loop.runTurn(h.threadId, h.turnId)).toBe('completed')
+    const instructions = seenRequests.at(-1)?.contextInstructions?.join('\n') ?? ''
+    expect(instructions).not.toContain('reference_image_paths')
+    expect(instructions).not.toContain(localFilePath)
   })
 
   it('routes built-in DeepSeek v4 image attachments as text fallbacks', async () => {
@@ -463,5 +507,18 @@ function visionCapabilities(): ModelCapabilityMetadata {
     supportsToolCalling: true,
     contextWindowTokens: 128_000,
     messageParts: ['text', 'image_url']
+  }
+}
+
+function generateImageTool(): LocalTool {
+  return {
+    name: 'generate_image',
+    description: 'Generate or edit an image.',
+    inputSchema: { type: 'object' },
+    toolKind: 'tool_call',
+    policy: 'auto',
+    async execute() {
+      return { output: { ok: true } }
+    }
   }
 }

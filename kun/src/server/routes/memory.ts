@@ -31,16 +31,18 @@ export async function updateMemory(store: MemoryStore | undefined, id: string, r
   const parsed = MemoryUpdateRequest.safeParse(body.value)
   if (!parsed.success) return ERRORS.validation('invalid memory update body', parsed.error.issues)
   try {
-    return jsonResponse({ memory: await store.update(id, parsed.data) })
+    const workspace = new URL(request.url).searchParams.get('workspace') ?? undefined
+    return jsonResponse({ memory: await store.update(id, parsed.data, { workspace }) })
   } catch (error) {
     return ERRORS.notFound(errorMessage(error))
   }
 }
 
-export async function deleteMemory(store: MemoryStore | undefined, id: string): Promise<JsonResponse> {
+export async function deleteMemory(store: MemoryStore | undefined, id: string, request: Request): Promise<JsonResponse> {
   if (!store) return ERRORS.unavailable('memory store is unavailable')
   try {
-    return jsonResponse({ memory: await store.delete(id) })
+    const workspace = new URL(request.url).searchParams.get('workspace') ?? undefined
+    return jsonResponse({ memory: await store.delete(id, { workspace }) })
   } catch (error) {
     return ERRORS.notFound(errorMessage(error))
   }

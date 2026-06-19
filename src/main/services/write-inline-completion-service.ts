@@ -3,6 +3,7 @@ import {
   DEFAULT_WRITE_INLINE_COMPLETION_MAX_TOKENS,
   isCustomModelEndpointFormat,
   modelEndpointPath,
+  resolveModelProviderProxyUrl,
   resolveWriteInlineCompletionEndpointFormat,
   resolveWriteInlineCompletionApiKey,
   resolveWriteInlineCompletionBaseUrl,
@@ -29,6 +30,7 @@ import {
   type WriteRetrievalContext,
   type WriteRetrievalSnippet
 } from './write-retrieval-service'
+import { fetchWithOptionalProxy } from '../proxy-fetch'
 
 const INLINE_COMPLETION_TIMEOUT_MS = 12_000
 const MAX_INLINE_COMPLETION_DEBUG_ENTRIES = 120
@@ -862,12 +864,12 @@ export async function requestWriteInlineCompletion(
       suffix: request.suffix,
       maxTokens
     })
-    const response = await fetch(url, {
+    const response = await fetchWithOptionalProxy(url, {
       method: 'POST',
       headers: buildProviderHeaders(apiKey, responseFormat),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(INLINE_COMPLETION_TIMEOUT_MS)
-    })
+    }, resolveModelProviderProxyUrl(settings))
     const text = await response.text()
     if (!response.ok) {
       appendInlineCompletionDebugEntry({

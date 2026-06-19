@@ -41,6 +41,7 @@ type Props = {
   canChangeModel: boolean
   stretch?: boolean
   composerReasoningEffort?: string
+  lockVisionToTextModelSwitch?: boolean
   onComposerModelChange: (modelId: string, providerId?: string) => void
   onComposerReasoningEffortChange?: (effort: ComposerReasoningEffort) => void
   onConfigureProviders?: () => void
@@ -105,6 +106,7 @@ export function FloatingComposerModelPicker({
   canChangeModel,
   stretch = false,
   composerReasoningEffort = 'max',
+  lockVisionToTextModelSwitch = false,
   onComposerModelChange,
   onComposerReasoningEffortChange,
   onConfigureProviders
@@ -411,39 +413,48 @@ export function FloatingComposerModelPicker({
               />
             </label>
             {activeProviderModelIds.length > 0 ? (
-              activeProviderModelIds.map((id) => (
-                <PickerRow
-                  key={`${activeProviderGroup.providerId}:${id}`}
-                  selected={composerModelMenuItemSelected({
-                    groupProviderId: activeProviderGroup.providerId,
-                    selectedProviderId,
-                    currentModel,
-                    modelId: id
-                  })}
-                  title={id}
-                  rightSlot={
-                    modelSupportsImageInput(modelProfileForModel(activeProviderGroup, id))
-                      ? <ModelCapabilityBadge kind="vision" label={t('composerModelVision')} />
-                      : <ModelCapabilityBadge kind="text" label={t('composerModelTextOnly')} />
-                  }
-                  onClick={() => {
-                    const nextReasoning = normalizeComposerReasoningEffort(
-                      composerReasoningEffort,
-                      modelProfileForModel(activeProviderGroup, id)
-                    )
-                    onComposerModelChange(
-                      id,
-                      activeProviderGroup.providerId === UNGROUPED_MODEL_PROVIDER_ID
-                        ? undefined
-                        : activeProviderGroup.providerId
-                    )
-                    if (nextReasoning !== currentReasoning) {
-                      onComposerReasoningEffortChange?.(nextReasoning)
+              activeProviderModelIds.map((id) => {
+                const targetProfile = modelProfileForModel(activeProviderGroup, id)
+                const selected = composerModelMenuItemSelected({
+                  groupProviderId: activeProviderGroup.providerId,
+                  selectedProviderId,
+                  currentModel,
+                  modelId: id
+                })
+                const disabled = lockVisionToTextModelSwitch &&
+                  !selected &&
+                  !canSwitchComposerModelFromCurrent(currentModelProfile, targetProfile)
+                return (
+                  <PickerRow
+                    key={`${activeProviderGroup.providerId}:${id}`}
+                    selected={selected}
+                    disabled={disabled}
+                    title={id}
+                    rightSlot={
+                      modelSupportsImageInput(targetProfile)
+                        ? <ModelCapabilityBadge kind="vision" label={t('composerModelVision')} />
+                        : <ModelCapabilityBadge kind="text" label={t('composerModelTextOnly')} />
                     }
-                    setMenuOpen(false)
-                  }}
-                />
-              ))
+                    onClick={() => {
+                      if (disabled) return
+                      const nextReasoning = normalizeComposerReasoningEffort(
+                        composerReasoningEffort,
+                        targetProfile
+                      )
+                      onComposerModelChange(
+                        id,
+                        activeProviderGroup.providerId === UNGROUPED_MODEL_PROVIDER_ID
+                          ? undefined
+                          : activeProviderGroup.providerId
+                      )
+                      if (nextReasoning !== currentReasoning) {
+                        onComposerReasoningEffortChange?.(nextReasoning)
+                      }
+                      setMenuOpen(false)
+                    }}
+                  />
+                )
+              })
             ) : (
               <div className="px-2.5 py-2 text-[12.5px] font-medium text-ds-faint">
                 {t('composerNoMatchingModels')}
@@ -885,13 +896,22 @@ function MenuSeparator(): ReactElement {
   return <div className="my-2 h-px bg-ds-border-muted" />
 }
 
+export function canSwitchComposerModelFromCurrent(
+  currentProfile: ModelProviderModelProfileV1 | undefined,
+  targetProfile: ModelProviderModelProfileV1 | undefined
+): boolean {
+  return !modelSupportsImageInput(currentProfile) || modelSupportsImageInput(targetProfile)
+}
+
 function PickerRow({
   selected,
+  disabled = false,
   title,
   rightSlot,
   onClick
 }: {
   selected: boolean
+  disabled?: boolean
   title: string
   rightSlot?: ReactElement | null
   onClick: () => void
@@ -902,10 +922,13 @@ function PickerRow({
       role="menuitemradio"
       aria-checked={selected}
       title={title}
+      disabled={disabled}
       onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
       className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition ${
-        selected
+        disabled
+          ? 'cursor-not-allowed text-ds-faint opacity-55'
+          : selected
           ? 'bg-ds-hover text-ds-ink'
           : 'text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
       }`}

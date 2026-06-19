@@ -102,6 +102,7 @@ export function upsertUserBlock(blocks: ChatBlock[], ev: UserMessageEventPayload
   const nextBlock: ChatBlock = {
     kind: 'user',
     id: ev.itemId,
+    turnId: ev.turnId,
     createdAt: ev.createdAt,
     text: ev.text,
     ...(ev.modelLabel ? { modelLabel: ev.modelLabel } : {}),

@@ -232,6 +232,39 @@ describe('KunRuntimeProvider', () => {
     expect(result.userMessageItemId).toBe('item_user_real')
   })
 
+  it('posts workspace checkpoint ids with Kun turn requests when provided', async () => {
+    const runtimeRequest = vi.fn(async () => ({
+      ok: true,
+      status: 202,
+      body: JSON.stringify({ threadId: 'thr_1', turnId: 'turn_abc', userMessageItemId: 'item_user_real' })
+    }))
+    installDsGui({ runtimeRequest })
+    const provider = new KunRuntimeProvider()
+    await provider.sendUserMessage('thr_1', 'hello', { workspaceCheckpointId: 'gcp_1' })
+    expect(runtimeRequest).toHaveBeenCalledWith(
+      '/v1/threads/thr_1/turns',
+      'POST',
+      JSON.stringify({
+        prompt: 'hello',
+        approvalPolicy: 'auto',
+        sandboxMode: 'danger-full-access',
+        workspaceCheckpointId: 'gcp_1'
+      })
+    )
+  })
+
+  it('posts rewind requests to the runtime', async () => {
+    const runtimeRequest = vi.fn(async () => ({ ok: true, status: 200, body: '{}' }))
+    installDsGui({ runtimeRequest })
+    const provider = new KunRuntimeProvider()
+    await provider.rewindThread('thr_1', 'turn_1')
+    expect(runtimeRequest).toHaveBeenCalledWith(
+      '/v1/threads/thr_1/rewind',
+      'POST',
+      JSON.stringify({ turnId: 'turn_1' })
+    )
+  })
+
   it('posts attachment ids with Kun turn requests when provided', async () => {
     const runtimeRequest = vi.fn(async () => ({
       ok: true,
@@ -577,7 +610,7 @@ describe('KunRuntimeProvider', () => {
           })
         }
       }
-      if (path === '/v1/memory/mem_1' && method === 'PATCH') {
+      if (path === '/v1/memory/mem_1?workspace=%2Ftmp%2Fworkspace' && method === 'PATCH') {
         expect(body).toBe(JSON.stringify({ disabled: true }))
         return {
           ok: true,
@@ -594,7 +627,7 @@ describe('KunRuntimeProvider', () => {
           })
         }
       }
-      if (path === '/v1/memory/mem_1' && method === 'DELETE') {
+      if (path === '/v1/memory/mem_1?workspace=%2Ftmp%2Fworkspace' && method === 'DELETE') {
         return {
           ok: true,
           status: 200,
@@ -616,11 +649,11 @@ describe('KunRuntimeProvider', () => {
     const provider = new KunRuntimeProvider()
 
     await expect(provider.listMemories({ workspace: '/tmp/workspace', includeDeleted: false })).resolves.toHaveLength(1)
-    await expect(provider.updateMemory('mem_1', { disabled: true })).resolves.toMatchObject({
+    await expect(provider.updateMemory('mem_1', { disabled: true }, { workspace: '/tmp/workspace' })).resolves.toMatchObject({
       id: 'mem_1',
       disabledAt: 't1'
     })
-    await expect(provider.deleteMemory('mem_1')).resolves.toMatchObject({
+    await expect(provider.deleteMemory('mem_1', { workspace: '/tmp/workspace' })).resolves.toMatchObject({
       id: 'mem_1',
       deletedAt: 't2'
     })
@@ -648,11 +681,17 @@ describe('KunRuntimeProvider', () => {
     const provider = new KunRuntimeProvider()
 
     const forked = await provider.forkThread('thr_parent')
+    await provider.forkThread('thr_parent', { turnId: 'turn_1' })
     await provider.submitUserInputResponse('input_1', [{ id: 'choice', label: 'Yes', value: 'yes' }])
     await provider.cancelUserInput('input_2')
 
     expect(forked).toMatchObject({ id: 'thr_fork', forkedFromThreadId: 'thr_parent' })
     expect(runtimeRequest).toHaveBeenCalledWith('/v1/threads/thr_parent/fork', 'POST')
+    expect(runtimeRequest).toHaveBeenCalledWith(
+      '/v1/threads/thr_parent/fork',
+      'POST',
+      JSON.stringify({ turnId: 'turn_1' })
+    )
     expect(runtimeRequest).toHaveBeenCalledWith(
       '/v1/user-inputs/input_1',
       'POST',

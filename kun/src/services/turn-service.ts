@@ -1,17 +1,36 @@
 import type { ThreadRecord, ThreadStatus } from '../contracts/threads.js'
-import type { CompactRequest, CompactResponse, StartTurnRequest, StartTurnResponse, Turn, TurnStatus } from '../contracts/turns.js'
+import type {
+  CompactRequest,
+  CompactResponse,
+  RewindThreadResponse,
+  StartTurnRequest,
+  StartTurnResponse,
+  Turn,
+  TurnStatus
+} from '../contracts/turns.js'
 import type { TurnItem } from '../contracts/items.js'
 import type { RuntimeErrorSeverity } from '../contracts/errors.js'
 import type { SessionStore } from '../ports/session-store.js'
 import type { ThreadStore } from '../ports/thread-store.js'
 import type { IdGenerator } from '../ports/id-generator.js'
+import type { ModelClient } from '../ports/model-client.js'
+import type { ImmutablePrefix } from '../cache/immutable-prefix.js'
 import type { InflightTracker } from '../loop/inflight-tracker.js'
 import type { SteeringQueue } from '../loop/steering-queue.js'
 import { ContextCompactor } from '../loop/context-compactor.js'
+import {
+  effectiveHistoryAfterLatestCompaction,
+  insertCompactionIntoVisibleHistory,
+  placeCompactionsAtTurnEnd
+} from '../loop/compaction-history.js'
+import { summarizeCompactionWithModel } from '../loop/compaction-summary.js'
+import type { ContextCompactionConfig } from '../loop/model-context-profile.js'
 import { makeUserItem, makeErrorItem } from '../domain/item.js'
 import { appendTurnItem, createTurnRecord, finishTurn, replaceTurnItem, startTurn as startTurnRecord } from '../domain/turn.js'
 import { touchThread } from '../domain/thread.js'
 import type { RuntimeEventRecorder } from './runtime-event-recorder.js'
+import type { UsageService } from './usage-service.js'
+import { createImmutablePrefix } from '../cache/immutable-prefix.js'
 
 export type TurnServiceDeps = {
   threadStore: ThreadStore
@@ -20,6 +39,11 @@ export type TurnServiceDeps = {
   inflight: InflightTracker
   steering: SteeringQueue
   compactor: ContextCompactor
+  model?: ModelClient
+  usage?: UsageService
+  prefix?: ImmutablePrefix
+  defaultModel?: string
+  contextCompaction?: ContextCompactionConfig
   ids: IdGenerator
   nowIso: () => string
 }
@@ -55,7 +79,8 @@ export class TurnService {
       attachmentIds: input.request.attachmentIds ?? [],
       guiPlan: input.request.guiPlan,
       mode: input.request.mode,
-      disableUserInput: input.request.disableUserInput
+      disableUserInput: input.request.disableUserInput,
+      workspaceCheckpointId: input.request.workspaceCheckpointId
     })
     const userItem = makeUserItem({
       id: `item_${turnId}_user`,
@@ -64,7 +89,8 @@ export class TurnService {
       text: input.request.prompt,
       displayText: input.request.displayText,
       attachmentIds: input.request.attachmentIds ?? [],
-      fileReferences: input.request.fileReferences ?? []
+      fileReferences: input.request.fileReferences ?? [],
+      workspaceCheckpointId: input.request.workspaceCheckpointId
     })
     const controller = new AbortController()
     await this.upsertThread(input.threadId, (current) => ({
@@ -100,6 +126,34 @@ export class TurnService {
     })
     this.deps.steering.setTurn(turnId)
     return { threadId: input.threadId, turnId, userMessageItemId: userItem.id }
+  }
+
+  async rewindThread(input: {
+    threadId: string
+    turnId: string
+  }): Promise<RewindThreadResponse> {
+    const thread = await this.deps.threadStore.get(input.threadId)
+    if (!thread) throw new Error(`thread not found: ${input.threadId}`)
+    if (thread.status === 'running') throw new Error('Cannot rewind while a turn is running.')
+    const targetIndex = thread.turns.findIndex((turn) => turn.id === input.turnId)
+    if (targetIndex < 0) throw new Error(`turn not found: ${input.turnId}`)
+
+    const keptTurns = thread.turns.slice(0, targetIndex)
+    const keptTurnIds = new Set(keptTurns.map((turn) => turn.id))
+    const items = await this.deps.sessionStore.loadItems(input.threadId)
+    const keptItems = items.filter((item) => keptTurnIds.has(item.turnId))
+    await this.deps.sessionStore.rewriteItems(input.threadId, keptItems)
+    await this.upsertThread(input.threadId, (current) => ({
+      ...touchThread(current, this.deps.nowIso()),
+      status: 'idle',
+      turns: current.turns.slice(0, targetIndex)
+    }))
+    return {
+      threadId: input.threadId,
+      turnId: input.turnId,
+      removedTurns: thread.turns.length - targetIndex,
+      remainingTurns: keptTurns.length
+    }
   }
 
   async steerTurn(input: { threadId: string; turnId: string; text: string }): Promise<void> {
@@ -144,21 +198,22 @@ export class TurnService {
     return { status: 'aborted' }
   }
 
-  async compact(input: { threadId: string; turnId?: string; request: CompactRequest }): Promise<CompactResponse> {
+  async compact(input: {
+    threadId: string
+    turnId?: string
+    request: CompactRequest
+    signal?: AbortSignal
+  }): Promise<CompactResponse> {
     const thread = await this.deps.threadStore.get(input.threadId)
     if (!thread) throw new Error(`thread not found: ${input.threadId}`)
     const turnId = input.turnId ?? thread.turns[thread.turns.length - 1]?.id ?? this.deps.ids.next('turn')
     const items = await this.deps.sessionStore.loadItems(input.threadId)
-    const history = items.filter((item) => !this.isSystemOnly(item))
-    const prefix = {
-      systemPrompt: '',
-      tools: [],
-      pinnedConstraints: ['user: preserve recent turns'],
-      fewShots: [],
-      fingerprint: 'compact',
-      revision: 0
-    }
-    const result = this.deps.compactor.compact({
+    const history = effectiveHistoryAfterLatestCompaction(items)
+      .filter((item) => item.kind !== 'error')
+    const prefix = this.deps.prefix ?? createImmutablePrefix({
+      pinnedConstraints: ['user: preserve recent turns']
+    })
+    let result = this.deps.compactor.compact({
       threadId: input.threadId,
       turnId,
       history,
@@ -174,8 +229,8 @@ export class TurnService {
     // the caller signals "nothing to compact" from the returned replacedTokens.
     if (result.replacedTokens > 0) {
       // Emit `started` before the persist so the live SSE stream shows a brief
-      // "正在压缩上下文" row; the appendItem I/O below separates it from the
-      // `completed` frame so the running state actually paints.
+      // "正在压缩上下文" row. In model-summary mode this also covers the
+      // extra summarizer request.
       await this.deps.events.record({
         kind: 'compaction_started',
         threadId: input.threadId,
@@ -183,7 +238,64 @@ export class TurnService {
         itemId: result.summaryItem.id,
         auto: false
       })
-      await this.appendItem(input.threadId, result.summaryItem)
+      if (this.deps.contextCompaction?.summaryMode === 'model' && this.deps.model) {
+        const model = modelForManualCompaction({
+          threadModel: thread.model,
+          defaultModel: this.deps.defaultModel,
+          clientModel: this.deps.model.model
+        })
+        const modelSummary = await summarizeCompactionWithModel({
+          threadId: input.threadId,
+          turnId,
+          model,
+          modelClient: this.deps.model,
+          prefix,
+          contextCompaction: this.deps.contextCompaction,
+          items: history,
+          heuristicSummary: result.summaryItem.kind === 'compaction' ? result.summaryItem.summary : '',
+          signal: input.signal ?? new AbortController().signal,
+          recordUsage: async (usageSnapshot) => {
+            const usage = this.deps.usage?.record(input.threadId, usageSnapshot) ?? usageSnapshot
+            await this.deps.events.record({
+              kind: 'usage',
+              threadId: input.threadId,
+              turnId,
+              model,
+              usage
+            })
+          },
+          recordFallback: async (message) => {
+            await this.deps.events.record({
+              kind: 'error',
+              threadId: input.threadId,
+              turnId,
+              message,
+              code: 'compaction_summary_fallback',
+              severity: 'warning'
+            })
+          }
+        })
+        if (modelSummary) {
+          result = this.deps.compactor.compact({
+            threadId: input.threadId,
+            turnId,
+            history,
+            prefix,
+            budgetTokens: input.request.budgetTokens,
+            reason: input.request.reason,
+            auto: false,
+            summaryOverride: modelSummary,
+            summaryItemId: result.summaryItem.id
+          })
+        }
+      }
+      const visibleItems = insertCompactionIntoVisibleHistory({
+        visibleItems: items,
+        compactedItems: result.next,
+        summaryItem: result.summaryItem
+      })
+      await this.deps.sessionStore.rewriteItems(input.threadId, visibleItems)
+      await this.rewriteThreadItemsFromSession(input.threadId, visibleItems)
       await this.deps.events.record({
         kind: 'compaction_completed',
         threadId: input.threadId,
@@ -465,6 +577,26 @@ export class TurnService {
     return items.filter((item) => item.kind === 'user_message')
   }
 
+  private async rewriteThreadItemsFromSession(threadId: string, items: TurnItem[]): Promise<void> {
+    if (items.length === 0) return
+    const itemsByTurn = new Map<string, TurnItem[]>()
+    for (const item of items) {
+      const turnItems = itemsByTurn.get(item.turnId) ?? []
+      turnItems.push(item)
+      itemsByTurn.set(item.turnId, turnItems)
+    }
+    await this.upsertThread(threadId, (current) => {
+      let changed = false
+      const turns = current.turns.map((turn) => {
+        const sessionItems = itemsByTurn.get(turn.id)
+        if (!sessionItems) return turn
+        changed = true
+        return { ...turn, items: placeCompactionsAtTurnEnd(sessionItems) }
+      })
+      return changed ? { ...current, turns } : current
+    })
+  }
+
   private finalizeOpenItem(
     item: TurnItem,
     status: Extract<TurnStatus, 'completed' | 'failed' | 'aborted'>,
@@ -481,7 +613,17 @@ export class TurnService {
     return { ...item, status: itemStatus, finishedAt } as TurnItem
   }
 
-  private isSystemOnly(item: TurnItem): boolean {
-    return item.kind === 'compaction' || item.kind === 'error'
+}
+
+function modelForManualCompaction(input: {
+  threadModel?: string
+  defaultModel?: string
+  clientModel?: string
+}): string {
+  for (const candidate of [input.threadModel, input.defaultModel, input.clientModel]) {
+    const normalized = candidate?.trim()
+    if (!normalized || normalized.toLowerCase() === 'auto') continue
+    return normalized
   }
+  return input.threadModel?.trim() || input.defaultModel?.trim() || input.clientModel?.trim() || ''
 }

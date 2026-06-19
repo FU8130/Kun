@@ -10,7 +10,8 @@ import {
 import kunLogoPng from '../asset/img/kun.png?url'
 import kunMacLogoPng from '../asset/img/kun_mac.png?url'
 import kunTrayPng from '../asset/img/kun_tray.png?url'
-import { createAppIcon, pickTrayIcon } from './app-icon'
+import { createAppIcon, pickTrayIcon, prepareTrayIcon } from './app-icon'
+import { buildTrayMenuTemplate, parseTrayThreads, type TrayThreadSummary } from './tray-session-menu'
 import { configureLinuxWaylandImeSwitches } from './app-command-line'
 import { configureAppIdentity } from './app-identity'
 import { runLegacyKunDataMigration } from './legacy-data-migration'
@@ -37,6 +38,7 @@ import {
 } from '../shared/app-settings'
 import { parseRuntimeErrorBody, runtimeErrorToError, type RuntimeErrorCode } from '../shared/runtime-error'
 import type { GuiUpdateState } from '../shared/gui-update'
+import type { TrayActionPayload } from '../shared/kun-gui-api'
 import { isAllowedDevPreviewUrl } from '../shared/dev-preview-url'
 import { isAuthorizedPrototypeFileUrl } from './services/prototype-embed-registry'
 import { fetchUpstreamModelIds } from './upstream-models'
@@ -205,6 +207,8 @@ let managedRuntimesStoppedForQuit = false
 let managedRuntimesStopPromise: Promise<void> | null = null
 let appBehavior: AppBehaviorConfigV1 = normalizeAppBehaviorSettings()
 let tray: Tray | null = null
+let trayMenu: Menu | null = null
+let trayMenuOpenPromise: Promise<void> | null = null
 let isQuitting = false
 let closeWindowPromptOpen = false
 
@@ -247,7 +251,8 @@ async function loadGuiUpdaterModule(): Promise<GuiUpdaterModule> {
           module.initializeGuiUpdater(
             () => mainWindow,
             async () => (await store.load()).guiUpdate.channel,
-            stopManagedRuntimesForQuit
+            stopManagedRuntimesForQuit,
+            async () => (await store.load()).locale
           )
           guiUpdaterInitialized = true
         }
@@ -319,21 +324,6 @@ traceStartup('single instance lock checked', {
   skippedForClawScheduleMcpServer: runningClawScheduleMcpServer
 })
 
-function trayLabels(locale: AppSettingsV1['locale']): { show: string; quit: string; tooltip: string } {
-  if (locale === 'zh') {
-    return {
-      show: '显示 Kun',
-      quit: '退出',
-      tooltip: 'Kun'
-    }
-  }
-  return {
-    show: 'Show Kun',
-    quit: 'Quit',
-    tooltip: 'Kun'
-  }
-}
-
 function windowCloseLabels(locale: AppSettingsV1['locale']): {
   title: string
   message: string
@@ -402,12 +392,74 @@ function revealMainWindow(): void {
   mainWindow.focus()
 }
 
+function dispatchTrayAction(action: TrayActionPayload): void {
+  revealMainWindow()
+  const window = mainWindow
+  if (!window || window.isDestroyed()) return
+  const send = (): void => {
+    if (!window.isDestroyed()) window.webContents.send('tray:action', action)
+  }
+  if (window.webContents.isLoadingMainFrame()) {
+    window.webContents.once('did-finish-load', send)
+  } else {
+    send()
+  }
+}
+
+function quitFromTray(): void {
+  isQuitting = true
+  app.quit()
+}
+
+function createTrayMenu(settings: AppSettingsV1, threads: TrayThreadSummary[]): Menu {
+  return Menu.buildFromTemplate(buildTrayMenuTemplate({
+    locale: settings.locale,
+    threads,
+    actions: {
+      openThread: (threadId) => dispatchTrayAction({ type: 'open-thread', threadId }),
+      newChat: () => dispatchTrayAction({ type: 'new-chat' }),
+      openApp: revealMainWindow,
+      quit: quitFromTray
+    }
+  }))
+}
+
+async function loadTrayThreads(settings: AppSettingsV1): Promise<TrayThreadSummary[]> {
+  try {
+    const response = await fetch(`${getRuntimeBaseUrlForSettings(settings)}/v1/threads?limit=20`, {
+      headers: runtimeAuthHeaders(settings),
+      signal: AbortSignal.timeout(1_000)
+    })
+    return response.ok ? parseTrayThreads(await response.text()) : []
+  } catch (error) {
+    logWarn('tray', 'Failed to load tray sessions.', {
+      message: error instanceof Error ? error.message : String(error)
+    })
+    return []
+  }
+}
+
+function showTrayMenu(): void {
+  if (!tray || trayMenuOpenPromise) return
+  const currentTray = tray
+  trayMenuOpenPromise = (async () => {
+    const settings = await store.load()
+    const threads = await loadTrayThreads(settings)
+    if (currentTray.isDestroyed()) return
+    trayMenu = createTrayMenu(settings, threads)
+    currentTray.popUpContextMenu(trayMenu)
+  })().finally(() => {
+    trayMenuOpenPromise = null
+  })
+}
+
 function syncTray(settings: AppSettingsV1): void {
   appBehavior = settings.appBehavior
   if (appBehavior.closeAction === 'quit') {
     if (tray) {
       tray.destroy()
       tray = null
+      trayMenu = null
     }
     return
   }
@@ -415,27 +467,16 @@ function syncTray(settings: AppSettingsV1): void {
   if (!tray) {
     // Tray 优先用专门的托盘图(在 16x16/24x24 任务栏尺寸下更清晰的剪影);
     // 托盘图加载失败时回退到主应用图,这样不会看到 electron 默认占位。
-    const traySource = pickTrayIcon(trayIcon, appIcon)
+    const traySource = prepareTrayIcon(pickTrayIcon(trayIcon, appIcon))
     tray = new Tray(traySource.isEmpty() ? nativeImage.createEmpty() : traySource)
-    tray.on('click', revealMainWindow)
+    tray.on('click', showTrayMenu)
     tray.on('double-click', revealMainWindow)
+    tray.on('right-click', showTrayMenu)
   }
 
-  const labels = trayLabels(settings.locale)
-  tray.setToolTip(labels.tooltip)
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: labels.show, click: revealMainWindow },
-      { type: 'separator' },
-      {
-        label: labels.quit,
-        click: () => {
-          isQuitting = true
-          app.quit()
-        }
-      }
-    ])
-  )
+  tray.setToolTip('Kun')
+  trayMenu = createTrayMenu(settings, [])
+  tray.setContextMenu(null)
 }
 
 async function saveWindowCloseActionPreference(closeAction: WindowCloseAction): Promise<void> {
@@ -1516,6 +1557,11 @@ app.whenReady().then(async () => {
 
   createWindow({ suppressInitialShow: shouldStartHidden(initial) })
   traceStartup('createWindow:returned')
+  void loadGuiUpdaterModule()
+    .then((module) => module.showPostUpdateReleaseNotes())
+    .catch((error) => {
+      console.warn('[kun-gui updater] failed to show post-update release notes:', error)
+    })
 
   void pruneOnStartup().catch((err) => {
     console.warn('[kun-gui] prune logs:', err)

@@ -27,9 +27,11 @@ type Harness = {
     setThreadGoal: ReturnType<typeof vi.fn>
     clearThreadGoal: ReturnType<typeof vi.fn>
     interruptTurn: ReturnType<typeof vi.fn>
+    forkThread: ReturnType<typeof vi.fn>
   }
   recoverActiveTurn: ReturnType<typeof vi.fn>
   refreshThreads: ReturnType<typeof vi.fn>
+  selectThread: ReturnType<typeof vi.fn>
   sendMessage: ReturnType<typeof vi.fn>
   state: ChatState
 }
@@ -83,7 +85,18 @@ function buildHarness(options: {
       )
     ),
     clearThreadGoal: vi.fn(async () => true),
-    interruptTurn: vi.fn(async () => undefined)
+    interruptTurn: vi.fn(async () => undefined),
+    forkThread: vi.fn(async (
+      threadId: string,
+      options?: { turnId?: string }
+    ) => ({
+      ...thread('thr_forked'),
+      title: 'Forked',
+      forkedFromThreadId: threadId,
+      forkedFromTitle: 'Parent',
+      forkedAt: '2026-06-04T00:02:00.000Z',
+      forkedFromTurnCount: options?.turnId ? 1 : 2
+    }))
   }
   registryMock.getProvider.mockReturnValue(provider)
 
@@ -94,6 +107,9 @@ function buildHarness(options: {
     state.threads = [created, ...state.threads]
   })
   const refreshThreads = vi.fn(async () => undefined)
+  const selectThread = vi.fn(async (id: string) => {
+    state.activeThreadId = id
+  })
   const drainQueuedMessages = vi.fn(async () => undefined)
   const recoverActiveTurn = vi.fn(async () => false)
   const sendMessage = vi.fn(async (
@@ -110,6 +126,7 @@ function buildHarness(options: {
     drainQueuedMessages,
     recoverActiveTurn,
     refreshThreads,
+    selectThread,
     runtimeConnection: 'ready',
     sendMessage,
     settingsSection: 'general',
@@ -127,8 +144,30 @@ function buildHarness(options: {
     sseAbortRef: { current: null }
   })
 
-  return { actions, createThread, drainQueuedMessages, get, provider, recoverActiveTurn, refreshThreads, sendMessage, state }
+  return { actions, createThread, drainQueuedMessages, get, provider, recoverActiveTurn, refreshThreads, selectThread, sendMessage, state }
 }
+
+describe('chat-store-maintenance-actions fork actions', () => {
+  beforeEach(() => {
+    registryMock.getProvider.mockReset()
+  })
+
+  it('forks the active thread from a specific turn and selects the new thread', async () => {
+    const { actions, provider, refreshThreads, selectThread, state } = buildHarness()
+    state.blocks = [
+      { kind: 'user', id: 'user_1', turnId: 'turn_1', text: 'question' },
+      { kind: 'assistant', id: 'assistant_1', turnId: 'turn_1', text: 'answer' },
+      { kind: 'user', id: 'user_2', turnId: 'turn_2', text: 'later question' }
+    ]
+
+    await actions.forkThreadFromTurn(' turn_1 ')
+
+    expect(provider.forkThread).toHaveBeenCalledWith('thr_existing', { turnId: 'turn_1' })
+    expect(refreshThreads).toHaveBeenCalledTimes(1)
+    expect(selectThread).toHaveBeenCalledWith('thr_forked')
+    expect(state.activeThreadId).toBe('thr_forked')
+  })
+})
 
 describe('chat-store-maintenance-actions goal actions', () => {
   beforeEach(() => {

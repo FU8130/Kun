@@ -3,7 +3,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from 'react-i18next'
-import { Check, ChevronDown, ChevronRight, Copy, Download, File, FileEdit, ImageIcon, Loader2, MessageSquareQuote, PencilLine, Terminal, Video, Wrench } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Copy, Download, File, FileEdit, GitFork, ImageIcon, Loader2, MessageSquareQuote, PencilLine, Terminal, Video, Wrench } from 'lucide-react'
 import type { AttachmentReference, ChatBlock, GeneratedFileReference, RuntimeDisclosureMetadata, ToolBlock, UserFileReference, UserInputAnswer, UserInputQuestion } from '../../agent/types'
 import { extractUnifiedDiffText } from '../../lib/diff-stats'
 import { useChatStore } from '../../store/chat-store'
@@ -53,7 +53,7 @@ function UserMessageBubble({
       ? block.meta.displayText.trim()
       : null
   const displayText = metaDisplayText ?? parsedWritePrompt?.userInput ?? parsedClawPrompt?.text ?? block.text
-  const canEdit = !metaDisplayText
+  const canEdit = route === 'chat' || !metaDisplayText
   const showClawInboundCard = route === 'claw' && parsedClawPrompt?.inbound === true
 
   useEffect(() => {
@@ -1352,7 +1352,18 @@ function formatMessageDateTime(input: string, locale: string): string {
  */
 export const MessageBubble = memo(MessageBubbleImpl)
 
-function MessageBubbleImpl({ block, nested = false }: { block: ChatBlock; nested?: boolean }): ReactElement {
+function MessageBubbleImpl({
+  block,
+  nested = false,
+  forkAction
+}: {
+  block: ChatBlock
+  nested?: boolean
+  forkAction?: {
+    busy: boolean
+    onFork: () => void
+  }
+}): ReactElement {
   const { t, i18n } = useTranslation('common')
   const resolveApproval = useChatStore((s) => s.resolveApproval)
   if (block.kind === 'user') {
@@ -1371,7 +1382,22 @@ function MessageBubbleImpl({ block, nested = false }: { block: ChatBlock; nested
         {!streaming ? (
           <div className="mt-1 flex min-h-5 min-w-0 items-center justify-between gap-3 text-[11.5px] text-ds-faint opacity-0 transition duration-150 group-hover/message:opacity-100">
             <span className="min-w-0 truncate">{createdAtLabel ?? ''}</span>
-            <CopyFeedbackButton text={block.text} />
+            <div className="flex shrink-0 items-center gap-1.5">
+              {forkAction ? (
+                <button
+                  type="button"
+                  onClick={() => forkAction.onFork()}
+                  disabled={forkAction.busy}
+                  className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 transition hover:bg-ds-hover hover:text-ds-muted disabled:cursor-not-allowed disabled:opacity-60"
+                  title={t('forkFromAssistantResponse')}
+                  aria-label={t('forkFromAssistantResponse')}
+                >
+                  <GitFork className="h-3.5 w-3.5" strokeWidth={1.8} />
+                  <span>{forkAction.busy ? t('forkingThread') : t('forkResponse')}</span>
+                </button>
+              ) : null}
+              <CopyFeedbackButton text={block.text} />
+            </div>
           </div>
         ) : null}
       </div>

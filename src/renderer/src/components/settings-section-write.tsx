@@ -67,6 +67,8 @@ export function WriteSettingsSection({ ctx }: { ctx: Record<string, any> }): Rea
     kun,
     update,
     selectControlClass,
+    compactHomePath,
+    expandHomePath,
     pickWriteWorkspace,
     resetWriteWorkspaceToDefault,
     writeWorkspacePickerError,
@@ -112,16 +114,17 @@ export function WriteSettingsSection({ ctx }: { ctx: Record<string, any> }): Rea
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <input
                           className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                          value={form.write.defaultWorkspaceRoot}
-                          onChange={(e) =>
+                          value={compactHomePath(form.write.defaultWorkspaceRoot)}
+                          onChange={(e) => {
+                            const workspaceRoot = expandHomePath(e.target.value)
                             update({
                               write: {
-                                defaultWorkspaceRoot: e.target.value,
-                                activeWorkspaceRoot: e.target.value,
-                                workspaces: [e.target.value, ...form.write.workspaces]
+                                defaultWorkspaceRoot: workspaceRoot,
+                                activeWorkspaceRoot: workspaceRoot,
+                                workspaces: [workspaceRoot, ...form.write.workspaces]
                               }
                             })
-                          }
+                          }}
                           placeholder={t('writeWorkspaceRootPlaceholder')}
                         />
                         <button

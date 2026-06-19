@@ -162,7 +162,8 @@ export type CreateThreadRequest = z.infer<typeof CreateThreadRequest>
 export const ForkThreadRequest = z
   .object({
     relation: ThreadRelation.default('fork'),
-    title: z.string().optional()
+    title: z.string().optional(),
+    turnId: z.string().trim().min(1).optional()
   })
   .optional()
 export type ForkThreadRequest = z.infer<typeof ForkThreadRequest>

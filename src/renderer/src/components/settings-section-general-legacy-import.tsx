@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { ArchiveRestore, FolderOpen, Loader2 } from 'lucide-react'
 import type { LegacySessionDetectResult } from '@shared/kun-gui-api'
+import { compactHomePathForSettingsDisplay } from '../lib/settings-home-paths'
 import { InlineNoticeView, SettingsCard, SettingRow, type InlineNotice } from './settings-controls'
 
 type TranslateFn = (key: string, options?: Record<string, unknown>) => string
@@ -138,7 +139,7 @@ export function LegacySessionImportCard({
                         total: source.threadCount
                       })}
                     </span>
-                    <code className="break-all font-mono">{source.path}</code>
+                    <code className="break-all font-mono">{compactHomePathForSettingsDisplay(source.path)}</code>
                   </li>
                 ))}
               </ul>

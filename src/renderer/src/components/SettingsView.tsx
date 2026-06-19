@@ -24,10 +24,17 @@ import type {
   CoreRuntimeToolDiagnosticsJson
 } from '../agent/kun-contract'
 import type { WriteInlineCompletionDebugEntry } from '@shared/write-inline-completion'
-import { applyTheme, applyUiFontScale, applyWriteTypography } from '../lib/apply-theme'
+import { applyCursorSpotlight, applyTheme, applyUiFontScale, applyWriteTypography } from '../lib/apply-theme'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
 import type { SkillRootListItem } from '@shared/kun-gui-api'
 import { normalizeWorkspaceRoot } from '../lib/workspace-path'
+import {
+  compactHomePathForSettingsDisplay,
+  compactHomePathListForSettingsDisplay,
+  expandHomePathForSettingsUse,
+  expandHomePathListForSettingsUse,
+  expandSettingsHomePathsForUse
+} from '../lib/settings-home-paths'
 import { useChatStore, type SettingsRouteSection } from '../store/chat-store'
 import { SettingsSidebar } from './SettingsSidebar'
 import { WriteDebugLogModal } from './settings-debug-log'
@@ -48,7 +55,6 @@ import {
   ClawSettingsSection,
   EasterEggSettingsSection,
   GeneralSettingsSection,
-  ImageGenerationSettingsSection,
   KeyboardShortcutsSettingsSection,
   LlmDebugSettingsSection,
   WorktreeSettingsSection,
@@ -60,7 +66,7 @@ import {
   WriteSettingsSection
 } from './settings-sections'
 
-type SettingsCategory = 'general' | 'providers' | 'write' | 'imageGeneration' | 'mediaGeneration' | 'speechToText' | 'agents' | 'archives' | 'permissions' | 'worktree' | 'memory' | 'shortcuts' | 'easterEgg' | 'claw' | 'updates' | 'debug'
+type SettingsCategory = 'general' | 'providers' | 'write' | 'mediaGeneration' | 'speechToText' | 'agents' | 'archives' | 'permissions' | 'worktree' | 'memory' | 'shortcuts' | 'easterEgg' | 'claw' | 'updates' | 'debug'
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 type SettingsPatch = AppSettingsPatch
 type InlineNotice = {
@@ -136,6 +142,17 @@ export function SettingsView(): ReactElement {
   const formKun = form ? getKunRuntimeSettings(form) : null
   const formPort = formKun?.port
   const formGuiUpdateChannel = form?.guiUpdate?.channel
+  const formCursorSpotlight = form?.cursorSpotlight
+  const settingsPlatform = typeof window !== 'undefined' ? window.kunGui?.platform ?? '' : ''
+  const settingsHomeDir = typeof window !== 'undefined' ? window.kunGui?.homeDir ?? '' : ''
+  const compactHomePath = useCallback((value: string): string =>
+    compactHomePathForSettingsDisplay(value, settingsHomeDir, settingsPlatform), [settingsHomeDir, settingsPlatform])
+  const expandHomePath = useCallback((value: string): string =>
+    expandHomePathForSettingsUse(value, settingsHomeDir, settingsPlatform), [settingsHomeDir, settingsPlatform])
+  const compactHomePathList = useCallback((values: readonly string[]): string =>
+    compactHomePathListForSettingsDisplay(values, settingsHomeDir, settingsPlatform), [settingsHomeDir, settingsPlatform])
+  const expandHomePathList = useCallback((values: readonly string[]): string[] =>
+    expandHomePathListForSettingsUse(values, settingsHomeDir, settingsPlatform), [settingsHomeDir, settingsPlatform])
   const {
     checkingGuiUpdate,
     checkGuiUpdate,
@@ -179,6 +196,12 @@ export function SettingsView(): ReactElement {
     applyTheme(formTheme)
     applyUiFontScale(formUiFontScale)
   }, [formTheme, formUiFontScale])
+
+  useEffect(() => {
+    if (typeof formCursorSpotlight === 'boolean') {
+      applyCursorSpotlight(formCursorSpotlight)
+    }
+  }, [formCursorSpotlight])
 
   // Live-preview the Write editor typography as the form changes, mirroring the
   // theme/scale preview above. Keyed on the scalar fields so it only re-applies
@@ -253,7 +276,7 @@ export function SettingsView(): ReactElement {
       return
     }
     if (settingsSection === 'imageGeneration') {
-      setCategory('imageGeneration')
+      setCategory('mediaGeneration')
       return
     }
     if (settingsSection === 'mediaGeneration') {
@@ -351,7 +374,7 @@ export function SettingsView(): ReactElement {
     if (typeof window.kunGui?.listSkillRoots !== 'function') return
     setSkillRootsLoading(true)
     try {
-      const workspaceRoot = normalizeWorkspaceRoot(formWorkspaceRoot)
+      const workspaceRoot = normalizeWorkspaceRoot(expandHomePath(formWorkspaceRoot ?? ''))
       const result = await window.kunGui.listSkillRoots(workspaceRoot || undefined)
       if (result.ok) setSkillRoots(result.roots)
     } catch {
@@ -359,7 +382,7 @@ export function SettingsView(): ReactElement {
     } finally {
       setSkillRootsLoading(false)
     }
-  }, [formWorkspaceRoot])
+  }, [expandHomePath, formWorkspaceRoot])
 
   useEffect(() => {
     if (category !== 'agents') return
@@ -430,7 +453,7 @@ export function SettingsView(): ReactElement {
       setMcpConfigExists(true)
       setMcpNotice({
         tone: 'success',
-        message: t('mcpSaved', { path: result.path })
+        message: t('mcpSaved', { path: compactHomePath(result.path) })
       })
     } catch (e) {
       setMcpNotice({
@@ -456,7 +479,7 @@ export function SettingsView(): ReactElement {
     setRuntimeDiagnosticsNotice(null)
     try {
       const loaded = await loadKunDiagnostics(provider, {
-        workspace: normalizeWorkspaceRoot(formWorkspaceRoot)
+        workspace: normalizeWorkspaceRoot(expandHomePath(formWorkspaceRoot ?? ''))
       })
       if (loaded.runtimeInfo !== undefined) setRuntimeInfo(loaded.runtimeInfo)
       if (loaded.toolDiagnostics !== undefined) setToolDiagnostics(loaded.toolDiagnostics)
@@ -475,7 +498,7 @@ export function SettingsView(): ReactElement {
     } finally {
       setRuntimeDiagnosticsBusy(false)
     }
-  }, [formWorkspaceRoot])
+  }, [expandHomePath, formWorkspaceRoot])
 
   useEffect(() => {
     if (category !== 'agents' && category !== 'permissions' && category !== 'memory') return
@@ -507,7 +530,12 @@ export function SettingsView(): ReactElement {
     const provider = getProvider()
     if (typeof provider.createMemory !== 'function') return false
     try {
-      const memory = await provider.createMemory(input)
+      const workspace = normalizeWorkspaceRoot(formWorkspaceRoot)
+      const memory = await provider.createMemory({
+        ...input,
+        ...(input.scope === 'user' ? {} : { workspace }),
+        ...(input.scope === 'project' ? { project: workspace } : {})
+      })
       setMemoryRecords((records) => [memory, ...records])
       return true
     } catch (error) {
@@ -526,7 +554,9 @@ export function SettingsView(): ReactElement {
     const provider = getProvider()
     if (typeof provider.updateMemory !== 'function') return false
     try {
-      const memory = await provider.updateMemory(memoryId, patch)
+      const memory = await provider.updateMemory(memoryId, patch, {
+        workspace: normalizeWorkspaceRoot(formWorkspaceRoot)
+      })
       setMemoryRecords((records) => records.map((record) => (record.id === memoryId ? memory : record)))
       return true
     } catch (error) {
@@ -542,7 +572,9 @@ export function SettingsView(): ReactElement {
     const provider = getProvider()
     if (typeof provider.updateMemory !== 'function') return
     try {
-      const memory = await provider.updateMemory(memoryId, { disabled: true })
+      const memory = await provider.updateMemory(memoryId, { disabled: true }, {
+        workspace: normalizeWorkspaceRoot(formWorkspaceRoot)
+      })
       setMemoryRecords((records) => records.map((record) => record.id === memoryId ? memory : record))
     } catch (error) {
       setRuntimeDiagnosticsNotice({
@@ -556,7 +588,9 @@ export function SettingsView(): ReactElement {
     const provider = getProvider()
     if (typeof provider.deleteMemory !== 'function') return
     try {
-      await provider.deleteMemory(memoryId)
+      await provider.deleteMemory(memoryId, {
+        workspace: normalizeWorkspaceRoot(formWorkspaceRoot)
+      })
       setMemoryRecords((records) => records.filter((record) => record.id !== memoryId))
     } catch (error) {
       setRuntimeDiagnosticsNotice({
@@ -582,7 +616,11 @@ export function SettingsView(): ReactElement {
     setSaveError(null)
 
     try {
-      const next = coerceRendererSettings(await rendererRuntimeClient.setSettings(snapshot))
+      const next = coerceRendererSettings(
+        await rendererRuntimeClient.setSettings(
+          expandSettingsHomePathsForUse(snapshot, settingsHomeDir, settingsPlatform)
+        )
+      )
       if (version !== draftVersion.current) return
 
       setForm(next)
@@ -739,7 +777,7 @@ export function SettingsView(): ReactElement {
       if (typeof window.kunGui?.pickWorkspaceDirectory !== 'function') {
         throw new Error('workspace:pick-directory unavailable')
       }
-      const picked = await window.kunGui.pickWorkspaceDirectory(form.workspaceRoot || undefined)
+      const picked = await window.kunGui.pickWorkspaceDirectory(expandHomePath(form.workspaceRoot) || undefined)
       if (!picked.canceled && picked.path) {
         update({ workspaceRoot: picked.path })
       }
@@ -750,7 +788,7 @@ export function SettingsView(): ReactElement {
 
   const resetWorkspaceToDefault = (): void => {
     setWorkspacePickerError(null)
-    update({ workspaceRoot: DEFAULT_WORKSPACE_ROOT })
+    update({ workspaceRoot: expandHomePath(DEFAULT_WORKSPACE_ROOT) })
   }
 
   const pickWriteWorkspace = async (): Promise<void> => {
@@ -760,7 +798,7 @@ export function SettingsView(): ReactElement {
         throw new Error('workspace:pick-directory unavailable')
       }
       const picked = await window.kunGui.pickWorkspaceDirectory(
-        form.write.defaultWorkspaceRoot || DEFAULT_WRITE_WORKSPACE_ROOT
+        expandHomePath(form.write.defaultWorkspaceRoot || DEFAULT_WRITE_WORKSPACE_ROOT)
       )
       if (!picked.canceled && picked.path) {
         const workspaces = [
@@ -783,11 +821,12 @@ export function SettingsView(): ReactElement {
 
   const resetWriteWorkspaceToDefault = (): void => {
     setWriteWorkspacePickerError(null)
+    const workspaceRoot = expandHomePath(DEFAULT_WRITE_WORKSPACE_ROOT)
     update({
       write: {
-        defaultWorkspaceRoot: DEFAULT_WRITE_WORKSPACE_ROOT,
-        activeWorkspaceRoot: DEFAULT_WRITE_WORKSPACE_ROOT,
-        workspaces: [DEFAULT_WRITE_WORKSPACE_ROOT, ...form.write.workspaces]
+        defaultWorkspaceRoot: workspaceRoot,
+        activeWorkspaceRoot: workspaceRoot,
+        workspaces: [workspaceRoot, ...form.write.workspaces]
       }
     })
   }
@@ -799,7 +838,7 @@ export function SettingsView(): ReactElement {
         throw new Error('workspace:pick-directory unavailable')
       }
       const picked = await window.kunGui.pickWorkspaceDirectory(
-        form.claw.im.workspaceRoot || form.workspaceRoot || undefined
+        expandHomePath(form.claw.im.workspaceRoot || form.workspaceRoot) || undefined
       )
       if (!picked.canceled && picked.path) {
         update({ claw: { im: { workspaceRoot: picked.path } } })
@@ -868,6 +907,10 @@ export function SettingsView(): ReactElement {
     logPath,
     logDirOpenError,
     setLogDirOpenError,
+    compactHomePath,
+    expandHomePath,
+    compactHomePathList,
+    expandHomePathList,
     pickWriteWorkspace,
     resetWriteWorkspaceToDefault,
     writeWorkspacePickerError,
@@ -982,7 +1025,6 @@ export function SettingsView(): ReactElement {
           {category === 'general' ? <GeneralSettingsSection ctx={settingsSectionContext} /> : null}
           {category === 'providers' ? <ProvidersSettingsSection ctx={settingsSectionContext} /> : null}
           {category === 'write' ? <WriteSettingsSection ctx={settingsSectionContext} /> : null}
-          {category === 'imageGeneration' ? <ImageGenerationSettingsSection ctx={settingsSectionContext} /> : null}
           {category === 'mediaGeneration' ? <MediaGenerationSettingsSection ctx={settingsSectionContext} /> : null}
           {category === 'speechToText' ? <SpeechToTextSettingsSection ctx={settingsSectionContext} /> : null}
           {category === 'agents' || category === 'permissions' ? <AgentsSettingsSection ctx={settingsSectionContext} /> : null}

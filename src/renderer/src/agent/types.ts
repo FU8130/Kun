@@ -61,6 +61,8 @@ export type WebCitationSource = {
 
 export type RuntimeDisclosureMetadata = {
   displayText?: string
+  turnId?: string
+  workspaceCheckpointId?: string
   attachmentIds?: string[]
   attachments?: AttachmentReference[]
   fileReferences?: UserFileReference[]
@@ -235,13 +237,14 @@ export type ChatBlock =
   | {
       kind: 'user'
       id: string
+      turnId?: string
       createdAt?: string
       text: string
       modelLabel?: string
       managedBy?: 'claw'
       meta?: RuntimeDisclosureMetadata
     }
-  | { kind: 'assistant'; id: string; createdAt?: string; text: string }
+  | { kind: 'assistant'; id: string; turnId?: string; createdAt?: string; text: string }
   | { kind: 'reasoning'; id: string; createdAt?: string; text: string }
   | ToolBlock
   | CompactionBlock
@@ -449,9 +452,11 @@ export interface AgentProvider {
         title?: string
       }
       attachmentIds?: string[]
+      workspaceCheckpointId?: string
       fileReferences?: UserFileReference[]
     }
   ): Promise<{ turnId: string; threadId: string; userMessageItemId?: string }>
+  rewindThread?(threadId: string, turnId: string): Promise<void>
   reviewThread?(
     threadId: string,
     target: ReviewTarget,
@@ -484,9 +489,10 @@ export interface AgentProvider {
   }): Promise<CoreMemoryRecordJson>
   updateMemory?(
     memoryId: string,
-    patch: { content?: string; tags?: string[]; confidence?: number; disabled?: boolean }
+    patch: { content?: string; tags?: string[]; confidence?: number; disabled?: boolean },
+    options?: { workspace?: string }
   ): Promise<CoreMemoryRecordJson>
-  deleteMemory?(memoryId: string): Promise<CoreMemoryRecordJson>
+  deleteMemory?(memoryId: string, options?: { workspace?: string }): Promise<CoreMemoryRecordJson>
   getMemoryDiagnostics?(): Promise<CoreMemoryDiagnosticsJson>
   steerUserMessage?(threadId: string, turnId: string, text: string): Promise<void>
   interruptTurn(threadId: string, turnId: string, options?: { discard?: boolean }): Promise<void>
@@ -514,7 +520,7 @@ export interface AgentProvider {
   clearThreadTodos?(threadId: string): Promise<boolean>
   forkThread?(
     threadId: string,
-    options?: { relation?: 'primary' | 'fork' | 'side'; title?: string }
+    options?: { relation?: 'primary' | 'fork' | 'side'; title?: string; turnId?: string }
   ): Promise<NormalizedThread>
   resumeSession?(
     sessionId: string,

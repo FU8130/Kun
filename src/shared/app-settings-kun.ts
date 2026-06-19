@@ -275,9 +275,12 @@ export function defaultKunStorageSettings(): KunStorageSettingsV1 {
 
 export function defaultKunContextCompactionSettings(): KunContextCompactionSettingsV1 {
   return {
-    defaultSoftThreshold: 16_000,
-    defaultHardThreshold: 24_000,
-    summaryMode: 'heuristic',
+    defaultSoftThreshold: 96_000,
+    defaultHardThreshold: 108_800,
+    // Default to model-generated summaries (codex-style): the model writes a
+    // structured recap of the folded turns instead of a mechanical item list.
+    // Falls back to the heuristic summary automatically on timeout/failure.
+    summaryMode: 'model',
     summaryTimeoutMs: 15_000,
     summaryMaxTokens: 1_200,
     summaryInputMaxBytes: 96 * 1024
@@ -353,10 +356,18 @@ export function mergeKunRuntimeSettings(
     ...(patch?.storage ?? {})
   })
   const currentContextCompaction = normalizeKunContextCompactionSettings(current.contextCompaction)
-  const nextContextCompaction = normalizeKunContextCompactionSettings({
+  const contextCompactionPatch = patch?.contextCompaction ?? {}
+  const nextContextCompactionInput = {
     ...currentContextCompaction,
-    ...(patch?.contextCompaction ?? {})
-  })
+    ...contextCompactionPatch
+  }
+  if (
+    contextCompactionPatch.defaultSoftThreshold !== undefined &&
+    contextCompactionPatch.defaultHardThreshold === undefined
+  ) {
+    nextContextCompactionInput.defaultHardThreshold = contextCompactionPatch.defaultSoftThreshold
+  }
+  const nextContextCompaction = normalizeKunContextCompactionSettings(nextContextCompactionInput)
   const currentImageGeneration = normalizeKunImageGenerationSettings(current.imageGeneration)
   const nextImageGeneration = normalizeKunImageGenerationSettings({
     ...currentImageGeneration,
@@ -655,7 +666,10 @@ function normalizeKunContextCompactionSettings(
 ): KunContextCompactionSettingsV1 {
   const defaults = defaultKunContextCompactionSettings()
   const defaultSoftThreshold = boundedPositiveInt(input?.defaultSoftThreshold, defaults.defaultSoftThreshold)
-  const requestedHardThreshold = boundedPositiveInt(input?.defaultHardThreshold, defaults.defaultHardThreshold)
+  const defaultHardThreshold = input?.defaultSoftThreshold !== undefined && input?.defaultHardThreshold === undefined
+    ? defaultSoftThreshold
+    : defaults.defaultHardThreshold
+  const requestedHardThreshold = boundedPositiveInt(input?.defaultHardThreshold, defaultHardThreshold)
   return {
     defaultSoftThreshold,
     defaultHardThreshold: Math.max(defaultSoftThreshold, requestedHardThreshold),

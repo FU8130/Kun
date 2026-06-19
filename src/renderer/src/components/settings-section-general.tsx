@@ -39,6 +39,8 @@ export function GeneralSettingsSection({ ctx }: { ctx: Record<string, any> }): R
     logPath,
     logDirOpenError,
     setLogDirOpenError,
+    compactHomePath,
+    expandHomePath,
     pickWriteWorkspace,
     resetWriteWorkspaceToDefault,
     writeWorkspacePickerError,
@@ -161,8 +163,8 @@ export function GeneralSettingsSection({ ctx }: { ctx: Record<string, any> }): R
                       <div className="flex items-center gap-2">
                         <input
                           className="w-full rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30"
-                          value={form.workspaceRoot}
-                          onChange={(e) => update({ workspaceRoot: e.target.value })}
+                          value={compactHomePath(form.workspaceRoot)}
+                          onChange={(e) => update({ workspaceRoot: expandHomePath(e.target.value) })}
                           placeholder={t('workspaceRootPlaceholder')}
                         />
                         <button
@@ -186,6 +188,16 @@ export function GeneralSettingsSection({ ctx }: { ctx: Record<string, any> }): R
                         </p>
                       ) : null}
                     </div>
+                  }
+                />
+                <SettingRow
+                  title={t('cursorSpotlight')}
+                  description={t('cursorSpotlightDesc')}
+                  control={
+                    <Toggle
+                      checked={form.cursorSpotlight !== false}
+                      onChange={(enabled) => update({ cursorSpotlight: enabled })}
+                    />
                   }
                 />
               </SettingsCard>
@@ -313,7 +325,7 @@ export function GeneralSettingsSection({ ctx }: { ctx: Record<string, any> }): R
                     <div className="flex w-full min-w-0 flex-col items-start gap-2">
                       {logPath ? (
                         <code className="block w-full max-w-full break-all rounded-xl bg-ds-main/70 px-3 py-2 font-mono text-[12px] text-ds-muted shadow-sm">
-                          {logPath}
+                          {compactHomePath(logPath)}
                         </code>
                       ) : (
                         <span className="text-[13px] text-ds-faint">…</span>

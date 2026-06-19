@@ -1,7 +1,7 @@
 import type { Dispatch, ReactElement, SetStateAction } from 'react'
-import { Archive, AudioLines, Bot, BrainCircuit, GitBranch, Bug, ChevronLeft, Globe, ImageIcon, Keyboard, Mic, PencilLine, RefreshCw, ServerCog, Settings, ShieldCheck, Smartphone, Sparkles } from 'lucide-react'
+import { Archive, AudioLines, Bot, BrainCircuit, GitBranch, Bug, ChevronLeft, Globe, Keyboard, Mic, PencilLine, RefreshCw, ServerCog, Settings, ShieldCheck, Smartphone, Sparkles } from 'lucide-react'
 
-type SettingsCategory = 'general' | 'providers' | 'write' | 'imageGeneration' | 'mediaGeneration' | 'speechToText' | 'agents' | 'archives' | 'permissions' | 'worktree' | 'memory' | 'shortcuts' | 'easterEgg' | 'claw' | 'updates' | 'debug'
+type SettingsCategory = 'general' | 'providers' | 'write' | 'mediaGeneration' | 'speechToText' | 'agents' | 'archives' | 'permissions' | 'worktree' | 'memory' | 'shortcuts' | 'easterEgg' | 'claw' | 'updates' | 'debug'
 
 export function SettingsSidebar({
   category,
@@ -22,11 +22,12 @@ export function SettingsSidebar({
     }`
 
   return (
-    <aside className="ds-drag flex w-[248px] shrink-0 flex-col border-r border-ds-border bg-ds-sidebar backdrop-blur-md">
-      <div className="px-3 pb-3 pt-3">
+    <aside className="ds-drag flex h-full min-h-0 w-[248px] shrink-0 flex-col border-r border-ds-border bg-ds-sidebar backdrop-blur-md">
+      <div className="shrink-0 px-3 pb-3 pt-3">
         <div aria-hidden className="ds-titlebar-safe-block" />
         <button
           type="button"
+          data-cursor-spotlight-target
           onClick={goBack}
           className="ds-no-drag flex items-center gap-2 rounded-xl px-2 py-2 text-[14px] text-ds-muted hover:bg-ds-hover hover:text-ds-ink"
         >
@@ -34,29 +35,37 @@ export function SettingsSidebar({
           {t('back')}
         </button>
       </div>
-      <nav className="ds-no-drag flex flex-col gap-0.5 px-2">
-        <button type="button" className={catCls('general')} onClick={() => setCategory('general')}>
+      <nav className="ds-no-drag flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-2 pb-2">
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('general')}
+          onClick={() => setCategory('general')}
+        >
           <Globe className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('general')}
         </button>
-        <button type="button" className={catCls('providers')} onClick={() => setCategory('providers')}>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('providers')}
+          onClick={() => setCategory('providers')}
+        >
           <ServerCog className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('providers')}
         </button>
-        <button type="button" className={catCls('write')} onClick={() => setCategory('write')}>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('write')}
+          onClick={() => setCategory('write')}
+        >
           <PencilLine className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('write')}
         </button>
         <button
           type="button"
-          className={catCls('imageGeneration')}
-          onClick={() => setCategory('imageGeneration')}
-        >
-          <ImageIcon className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-          {t('imageGen')}
-        </button>
-        <button
-          type="button"
+          data-cursor-spotlight-target
           className={catCls('mediaGeneration')}
           onClick={() => setCategory('mediaGeneration')}
         >
@@ -65,54 +74,105 @@ export function SettingsSidebar({
         </button>
         <button
           type="button"
+          data-cursor-spotlight-target
           className={catCls('speechToText')}
           onClick={() => setCategory('speechToText')}
         >
           <Mic className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('speechToText')}
         </button>
-        <button type="button" className={catCls('agents')} onClick={() => setCategory('agents')}>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('agents')}
+          onClick={() => setCategory('agents')}
+        >
           <Bot className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('agents')}
         </button>
-        <button type="button" className={catCls('archives')} onClick={() => setCategory('archives')}>
-          <Archive className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-          {t('archives')}
-        </button>
-        <button type="button" className={catCls('permissions')} onClick={() => setCategory('permissions')}>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('permissions')}
+          onClick={() => setCategory('permissions')}
+        >
           <ShieldCheck className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('permissions')}
         </button>
-        <button type="button" className={catCls('worktree')} onClick={() => setCategory('worktree')}>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('archives')}
+          onClick={() => setCategory('archives')}
+        >
+          <Archive className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
+          {t('archives')}
+        </button>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('worktree')}
+          onClick={() => setCategory('worktree')}
+        >
           <GitBranch className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('worktree')}
         </button>
-        <button type="button" className={catCls('memory')} onClick={() => setCategory('memory')}>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('memory')}
+          onClick={() => setCategory('memory')}
+        >
           <BrainCircuit className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('memory')}
         </button>
-        <button type="button" className={catCls('shortcuts')} onClick={() => setCategory('shortcuts')}>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('shortcuts')}
+          onClick={() => setCategory('shortcuts')}
+        >
           <Keyboard className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('keyboardShortcuts')}
         </button>
-        <button type="button" className={catCls('easterEgg')} onClick={() => setCategory('easterEgg')}>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('easterEgg')}
+          onClick={() => setCategory('easterEgg')}
+        >
           <Sparkles className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('easterEgg')}
         </button>
-        <button type="button" className={catCls('updates')} onClick={() => setCategory('updates')}>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('updates')}
+          onClick={() => setCategory('updates')}
+        >
           <RefreshCw className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('updates')}
         </button>
-        <button type="button" className={catCls('claw')} onClick={() => setCategory('claw')}>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('claw')}
+          onClick={() => setCategory('claw')}
+        >
           <Smartphone className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('claw')}
         </button>
-        <button type="button" className={catCls('debug')} onClick={() => setCategory('debug')}>
+        <button
+          type="button"
+          data-cursor-spotlight-target
+          className={catCls('debug')}
+          onClick={() => setCategory('debug')}
+        >
           <Bug className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('debug')}
         </button>
       </nav>
-      <div className="ds-no-drag mt-auto border-t border-ds-border p-3">
+      <div className="ds-no-drag shrink-0 border-t border-ds-border p-3">
         <div className="flex items-center gap-2 rounded-xl px-2 py-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-ds-subtle text-ds-muted">
             <Settings className="h-4 w-4" strokeWidth={1.75} />

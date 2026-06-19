@@ -18,7 +18,6 @@ export function buildMemoryToolProviders(store: MemoryStore | undefined): Capabi
           properties: {
             content: { type: 'string' },
             scope: { type: 'string', enum: ['user', 'workspace', 'project'] },
-            workspace: { type: 'string' },
             tags: { type: 'array', items: { type: 'string' } }
           },
           required: ['content'],
@@ -33,7 +32,8 @@ export function buildMemoryToolProviders(store: MemoryStore | undefined): Capabi
               memory: await store.create({
                 content,
                 scope: args.scope === 'user' || args.scope === 'project' ? args.scope : 'workspace',
-                workspace: typeof args.workspace === 'string' ? args.workspace : context.workspace,
+                workspace: context.workspace,
+                ...(args.scope === 'project' ? { project: context.workspace } : {}),
                 sourceThreadId: context.threadId,
                 sourceTurnId: context.turnId,
                 tags: Array.isArray(args.tags) ? args.tags.filter((tag): tag is string => typeof tag === 'string') : []
@@ -56,14 +56,14 @@ export function buildMemoryToolProviders(store: MemoryStore | undefined): Capabi
           additionalProperties: false
         },
         policy: 'on-request',
-        execute: async (args) => {
+        execute: async (args, context) => {
           if (typeof args.id !== 'string') return { output: { error: 'id is required' }, isError: true }
           return {
             output: {
               memory: await store.update(args.id, {
                 ...(typeof args.content === 'string' ? { content: args.content } : {}),
                 ...(typeof args.disabled === 'boolean' ? { disabled: args.disabled } : {})
-              })
+              }, { workspace: context.workspace })
             }
           }
         }
@@ -78,9 +78,9 @@ export function buildMemoryToolProviders(store: MemoryStore | undefined): Capabi
           additionalProperties: false
         },
         policy: 'on-request',
-        execute: async (args) => {
+        execute: async (args, context) => {
           if (typeof args.id !== 'string') return { output: { error: 'id is required' }, isError: true }
-          return { output: { memory: await store.delete(args.id) } }
+          return { output: { memory: await store.delete(args.id, { workspace: context.workspace }) } }
         }
       })
     ]

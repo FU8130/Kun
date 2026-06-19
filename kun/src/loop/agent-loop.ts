@@ -1,4 +1,5 @@
-import type { ModelClient, ModelRequest, ModelStreamChunk, ModelToolSpec } from '../ports/model-client.js'
+import { isAbsolute, relative, resolve } from 'node:path'
+import type { ModelClient, ModelRequest, ModelToolSpec } from '../ports/model-client.js'
 import type {
   ToolHost,
   ToolCallLike,
@@ -21,6 +22,12 @@ import type { RuntimeErrorSeverity } from '../contracts/errors.js'
 import type { IdGenerator } from '../ports/id-generator.js'
 import type { ImmutablePrefix } from '../cache/immutable-prefix.js'
 import { ContextCompactor } from './context-compactor.js'
+import {
+  effectiveHistoryAfterLatestCompaction,
+  insertCompactionIntoVisibleHistory,
+  placeCompactionsAtTurnEnd
+} from './compaction-history.js'
+import { summarizeCompactionWithModel } from './compaction-summary.js'
 import { InflightTracker } from './inflight-tracker.js'
 import { SteeringQueue } from './steering-queue.js'
 import {
@@ -125,9 +132,6 @@ function goalResumeKey(threadId: string, goal: ThreadGoal): string {
   return `${threadId}::${goal.createdAt}::${goal.objective}`
 }
 const MAX_TOOL_CATALOG_SNAPSHOTS = 256
-const DEFAULT_COMPACTION_SUMMARY_TIMEOUT_MS = 15_000
-const DEFAULT_COMPACTION_SUMMARY_MAX_TOKENS = 1_200
-const DEFAULT_COMPACTION_SUMMARY_INPUT_MAX_BYTES = 96 * 1024
 
 type TurnFailure = {
   error: string
@@ -272,6 +276,7 @@ function goalContinuationInstruction(goal: ThreadGoal | undefined): string | nul
 const GOAL_NO_TOOL_REPEAT_SIMILARITY = 0.85
 const GOAL_NO_TOOL_REPEAT_MIN_LENGTH = 12
 const GOAL_NO_TOOL_REPEAT_MAX_RECOVERY_STEPS = 3
+const EMPTY_POST_TOOL_MAX_RECOVERY_STEPS = 1
 
 function goalNoToolRecoveryInstruction(recoveryStep: number): string {
   return [
@@ -281,6 +286,15 @@ function goalNoToolRecoveryInstruction(recoveryStep: number): string {
     `- If the objective is actually achieved, call ${UPDATE_GOAL_TOOL_NAME} with status "complete" after verifying the current state.`,
     `- If the strict blocked audit is satisfied, call ${UPDATE_GOAL_TOOL_NAME} with status "blocked".`,
     '- Otherwise, continue with new substantive work or call an available tool to make concrete progress.'
+  ].join('\n')
+}
+
+function emptyPostToolRecoveryInstruction(): string {
+  return [
+    'Tool continuation recovery:',
+    '- The previous model response ended without a final answer after tool execution.',
+    '- Continue the task now: inspect the tool result, call additional tools if needed, or provide a clear final answer.',
+    '- Do not stop with an empty response.'
   ].join('\n')
 }
 
@@ -506,6 +520,7 @@ export class AgentLoop {
   private readonly toolCatalogSnapshots = new Map<string, ToolCatalogSnapshot>()
   private readonly lastNoToolTextByTurn = new Map<string, string>()
   private readonly goalNoToolRecoveryStepsByTurn = new Map<string, number>()
+  private readonly emptyPostToolRecoveryStepsByTurn = new Map<string, number>()
   private readonly turnFailures = new Map<string, TurnFailure>()
   /** Turns that executed at least one real (non-goal-status) tool call. */
   private readonly turnMadeProgress = new Set<string>()
@@ -643,6 +658,7 @@ export class AgentLoop {
       this.lastNoToolTextByTurn.delete(turnId)
       this.goalNoToolRecoveryStepsByTurn.delete(turnId)
       this.turnMadeProgress.delete(turnId)
+      this.emptyPostToolRecoveryStepsByTurn.delete(turnId)
       this.turnFailures.delete(turnId)
       await this.runTurnEndHooks(threadId, turnId, finalStatus ?? 'failed', finalError)
     }
@@ -1151,6 +1167,7 @@ export class AgentLoop {
     const history = await this.compactIfNeeded(items, model, signal, {
       threadId,
       turnId,
+      visibleItems: historyItems,
       toolSpecs: effectiveToolSpecs
     })
     if (signal.aborted) return 'aborted'
@@ -1163,6 +1180,15 @@ export class AgentLoop {
         ? [goalRecoveryInstruction]
         : []),
       ...(activeTodoInstruction ? [activeTodoInstruction] : []),
+      ...((this.emptyPostToolRecoveryStepsByTurn.get(turnId) ?? 0) > 0
+        ? [emptyPostToolRecoveryInstruction()]
+        : []),
+      ...imageGenerationReferenceInstructions({
+        imageAttachments: attachments.imageAttachments,
+        textFallbacks: attachments.textFallbacks,
+        workspace: thread?.workspace ?? '',
+        tools: effectiveToolSpecs
+      }),
       ...memoryInstructions(memories),
       ...skillResolution.instructions,
       ...(userInputDisabled ? [userInputUnavailableInstruction()] : []),
@@ -1490,6 +1516,52 @@ export class AgentLoop {
         )
         return 'failed'
       }
+      const hasCurrentTurnFileChange = historyItems.some(
+        (item) =>
+          item.turnId === turnId &&
+          item.kind === 'tool_call' &&
+          item.toolKind === 'file_change' &&
+          item.toolName !== CREATE_PLAN_TOOL_NAME
+      )
+      if (
+        stopReason === 'stop' &&
+        !textAccumulator.value.trim() &&
+        hasCurrentTurnFileChange
+      ) {
+        const recoverySteps = (this.emptyPostToolRecoveryStepsByTurn.get(turnId) ?? 0) + 1
+        if (recoverySteps <= EMPTY_POST_TOOL_MAX_RECOVERY_STEPS) {
+          this.emptyPostToolRecoveryStepsByTurn.set(turnId, recoverySteps)
+          return 'continue'
+        }
+
+        const message =
+          'Model stopped without a final answer after tool execution, including after a recovery retry.'
+        this.rememberTurnFailure(turnId, {
+          error: message,
+          code: 'empty_post_tool_continuation',
+          severity: 'error'
+        })
+        await this.opts.events.record({
+          kind: 'error',
+          threadId,
+          turnId,
+          message,
+          code: 'empty_post_tool_continuation',
+          severity: 'error'
+        })
+        await this.opts.turns.applyItem(
+          threadId,
+          makeErrorItem({
+            id: this.opts.ids.next('item_error'),
+            turnId,
+            threadId,
+            message,
+            code: 'empty_post_tool_continuation',
+            severity: 'error'
+          })
+        )
+        return 'failed'
+      }
       if (stopReason === 'stop' && activeGoalInstruction) {
         const previousText = this.lastNoToolTextByTurn.get(turnId)
         if (isRepeatedNoToolAssistantText(previousText, textAccumulator.value)) {
@@ -1534,6 +1606,7 @@ export class AgentLoop {
     // repetition window so unrelated later status texts are not compared.
     this.lastNoToolTextByTurn.delete(turnId)
     this.goalNoToolRecoveryStepsByTurn.delete(turnId)
+    this.emptyPostToolRecoveryStepsByTurn.delete(turnId)
     const dispatched = await this.dispatchToolCalls({
       calls: completedToolCalls,
       threadId,
@@ -2051,7 +2124,12 @@ export class AgentLoop {
     items: TurnItem[],
     model: string,
     signal: AbortSignal,
-    context: { threadId: string; turnId: string; toolSpecs?: readonly ModelToolSpec[] }
+    context: {
+      threadId: string
+      turnId: string
+      visibleItems: TurnItem[]
+      toolSpecs?: readonly ModelToolSpec[]
+    }
   ): Promise<TurnItem[]> {
     // Restore the accurate provider token count after a process restart,
     // when the in-memory pressure map is empty. Without this the next
@@ -2093,13 +2171,36 @@ export class AgentLoop {
       keepRecent: plan.keepRecent
     })
     if (result.replacedTokens > 0 && this.opts.contextCompaction?.summaryMode === 'model') {
-      const modelSummary = await this.summarizeCompactionWithModel({
+      const modelSummary = await summarizeCompactionWithModel({
         threadId,
         turnId,
         model,
+        modelClient: this.opts.model,
+        prefix: this.opts.prefix,
+        contextCompaction: this.opts.contextCompaction,
         items,
         heuristicSummary: result.summaryItem.kind === 'compaction' ? result.summaryItem.summary : '',
-        signal
+        signal,
+        recordUsage: async (usageSnapshot) => {
+          const usage = this.opts.usage.record(threadId, usageSnapshot)
+          await this.opts.events.record({
+            kind: 'usage',
+            threadId,
+            turnId,
+            model,
+            usage
+          })
+        },
+        recordFallback: async (message) => {
+          await this.opts.events.record({
+            kind: 'error',
+            threadId,
+            turnId,
+            message,
+            code: 'compaction_summary_fallback',
+            severity: 'warning'
+          })
+        }
       })
       if (signal.aborted) return items
       if (modelSummary) {
@@ -2115,13 +2216,15 @@ export class AgentLoop {
         })
       }
     }
-    // Persist the new compaction summary so the on-disk history
-    // reflects the folded state. SSE subscribers see the event
-    // through the event bus; the store append is async and safe to
-    // skip when no items need summarisation.
     if (result.replacedTokens > 0) {
+      const visibleItems = insertCompactionIntoVisibleHistory({
+        visibleItems: context.visibleItems,
+        compactedItems: result.next,
+        summaryItem: result.summaryItem
+      })
       this.opts.toolHost.clearReadTracker?.(threadId)
-      await this.opts.sessionStore.appendItem(threadId, result.summaryItem)
+      await this.opts.sessionStore.rewriteItems(threadId, visibleItems)
+      await this.rewriteThreadItemsFromSession(threadId, visibleItems)
       await this.opts.events.record({
         kind: 'compaction_completed',
         threadId,
@@ -2144,110 +2247,25 @@ export class AgentLoop {
     return result.next
   }
 
-  private async summarizeCompactionWithModel(input: {
-    threadId: string
-    turnId: string
-    model: string
-    items: TurnItem[]
-    heuristicSummary: string
-    signal: AbortSignal
-  }): Promise<string | undefined> {
-    if (input.signal.aborted) return undefined
-    const timeoutMs = Math.max(
-      1,
-      Math.floor(this.opts.contextCompaction?.summaryTimeoutMs ?? DEFAULT_COMPACTION_SUMMARY_TIMEOUT_MS)
-    )
-    const controller = new AbortController()
-    const onAbort = (): void => controller.abort()
-    const timeout = setTimeout(() => controller.abort(), timeoutMs)
-    input.signal.addEventListener('abort', onAbort, { once: true })
-    let fallbackRecorded = false
-    const recordFallback = async (message: string): Promise<void> => {
-      if (fallbackRecorded || input.signal.aborted) return
-      fallbackRecorded = true
-      await this.opts.events.record({
-        kind: 'error',
-        threadId: input.threadId,
-        turnId: input.turnId,
-        message,
-        code: 'compaction_summary_fallback',
-        severity: 'warning'
-      })
+  private async rewriteThreadItemsFromSession(threadId: string, items: TurnItem[]): Promise<void> {
+    if (items.length === 0) return
+    const current = await this.opts.threadStore.get(threadId)
+    if (!current) return
+    const itemsByTurn = new Map<string, TurnItem[]>()
+    for (const item of items) {
+      const turnItems = itemsByTurn.get(item.turnId) ?? []
+      turnItems.push(item)
+      itemsByTurn.set(item.turnId, turnItems)
     }
-    try {
-      const requestItem = makeUserItem({
-        id: `item_${input.turnId}_compaction_summary_request`,
-        turnId: input.turnId,
-        threadId: input.threadId,
-        text: buildModelCompactionPrompt({
-          items: input.items,
-          heuristicSummary: input.heuristicSummary,
-          maxBytes: this.opts.contextCompaction?.summaryInputMaxBytes ?? DEFAULT_COMPACTION_SUMMARY_INPUT_MAX_BYTES
-        })
-      })
-      let text = ''
-      for await (const chunk of this.opts.model.stream({
-        threadId: input.threadId,
-        turnId: input.turnId,
-        model: input.model,
-        systemPrompt: this.opts.prefix.systemPrompt,
-        contextInstructions: [
-          'Summarize context for a history fold. Preserve durable task state and omit transient chatter.'
-        ],
-        prefix: this.opts.prefix.fewShots,
-        history: [requestItem],
-        tools: [],
-        stream: true,
-        maxTokens: Math.max(
-          1,
-          Math.floor(this.opts.contextCompaction?.summaryMaxTokens ?? DEFAULT_COMPACTION_SUMMARY_MAX_TOKENS)
-        ),
-        temperature: 0,
-        reasoningEffort: 'off',
-        abortSignal: controller.signal
-      })) {
-        if (input.signal.aborted) return undefined
-        if (controller.signal.aborted) {
-          await recordFallback(
-            `Model compaction summary timed out after ${timeoutMs}ms; using heuristic summary.`
-          )
-          return undefined
-        }
-        if (chunk.kind === 'assistant_text_delta') text += chunk.text
-        if (chunk.kind === 'usage') {
-          const usage = this.opts.usage.record(input.threadId, chunk.usage)
-          await this.opts.events.record({
-            kind: 'usage',
-            threadId: input.threadId,
-            turnId: input.turnId,
-            model: input.model,
-            usage
-          })
-        }
-        if (chunk.kind === 'error') {
-          await recordFallback(
-            `Model compaction summary failed${chunk.code ? ` (${chunk.code})` : ''}: ${chunk.message}. Using heuristic summary.`
-          )
-          return undefined
-        }
-      }
-      const summary = text.trim()
-      if (!summary) {
-        await recordFallback('Model compaction summary returned empty text; using heuristic summary.')
-        return undefined
-      }
-      return summary ? summary : undefined
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      const reason = controller.signal.aborted && !input.signal.aborted
-        ? `Model compaction summary timed out after ${timeoutMs}ms`
-        : `Model compaction summary threw: ${message}`
-      await recordFallback(`${reason}; using heuristic summary.`)
-      return undefined
-    } finally {
-      clearTimeout(timeout)
-      input.signal.removeEventListener('abort', onAbort)
-    }
+    let changed = false
+    const turns = current.turns.map((turn) => {
+      const sessionItems = itemsByTurn.get(turn.id)
+      if (!sessionItems) return turn
+      changed = true
+      return { ...turn, items: placeCompactionsAtTurnEnd(sessionItems) }
+    })
+    if (!changed) return
+    await this.opts.threadStore.upsert(touchThread({ ...current, turns }, this.opts.nowIso()))
   }
 
   private async recordTokenEconomySavings(input: {
@@ -2533,7 +2551,8 @@ export class AgentLoop {
           mimeType: attachment.mimeType,
           dataBase64: attachment.data.toString('base64'),
           ...(attachment.width ? { width: attachment.width } : {}),
-          ...(attachment.height ? { height: attachment.height } : {})
+          ...(attachment.height ? { height: attachment.height } : {}),
+          ...(attachment.localFilePath ? { localFilePath: attachment.localFilePath } : {})
         })
         continue
       }
@@ -2642,6 +2661,45 @@ function attachmentRequestPipelineDetails(input: {
   }
 }
 
+function imageGenerationReferenceInstructions(input: {
+  imageAttachments: readonly ModelInputAttachment[]
+  textFallbacks: readonly ModelTextAttachmentFallback[]
+  workspace: string
+  tools: readonly Pick<ModelToolSpec, 'name'>[]
+}): string[] {
+  if (!input.tools.some((tool) => tool.name === 'generate_image')) return []
+
+  const references = [...input.imageAttachments, ...input.textFallbacks]
+    .filter((attachment) => attachment.mimeType.startsWith('image/'))
+    .map((attachment) => ({
+      name: attachment.name,
+      path: workspaceRelativeAttachmentPath(attachment.localFilePath, input.workspace)
+    }))
+    .filter((attachment): attachment is { name: string; path: string } => Boolean(attachment.path))
+
+  if (references.length === 0) return []
+  return [[
+    'Image-to-image reference images are available for this turn:',
+    ...references.map((reference) => `- ${reference.name}: ${reference.path}`),
+    'For image edits, restyles, redraws, or transformations, call `generate_image` with the matching workspace-relative path(s) in `reference_image_paths`.'
+  ].join('\n')]
+}
+
+function workspaceRelativeAttachmentPath(
+  localFilePath: string | undefined,
+  workspace: string
+): string | null {
+  const workspaceRoot = workspace.trim()
+  const rawPath = localFilePath?.trim()
+  if (!workspaceRoot || !rawPath) return null
+
+  const workspaceAbsolute = resolve(workspaceRoot)
+  const fileAbsolute = isAbsolute(rawPath) ? resolve(rawPath) : resolve(workspaceAbsolute, rawPath)
+  const relativePath = relative(workspaceAbsolute, fileAbsolute)
+  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) return null
+  return relativePath.replace(/\\/g, '/')
+}
+
 function normalizeApprovalPolicy(
   value: string | undefined
 ): ToolHostContext['approvalPolicy'] {
@@ -2700,112 +2758,6 @@ function buildToolCatalogDriftMessage(toolCatalog: {
     policy,
     sample ? `Current tools: ${sample}${suffix}.` : ''
   ].filter(Boolean).join(' ')
-}
-
-function buildModelCompactionPrompt(input: {
-  items: readonly TurnItem[]
-  heuristicSummary: string
-  maxBytes: number
-}): string {
-  const transcript = fitTextToBytes(
-    input.items
-      .map(compactionPromptLine)
-      .filter((line) => line.length > 0)
-      .join('\n'),
-    Math.max(1_024, input.maxBytes)
-  )
-  return [
-    'You are compacting a long agent conversation so work can continue past the context window.',
-    'Write a dense, factual handoff summary using EXACTLY the following section headers, in this order.',
-    'Keep every section; write "- (none)" when a section has no content. Use short bullets, not prose.',
-    'Do not invent facts, do not add generic advice, and preserve concrete identifiers verbatim',
-    '(file paths, function/variable names, commands, URLs, IDs, error messages).',
-    '',
-    '## Goal',
-    "- The user's overall objective and any explicit requirements or constraints.",
-    '## Completed',
-    '- Work already done and decisions made, with the concrete outcome of each.',
-    '## Key findings',
-    '- Important facts discovered (root causes, data values, API shapes) needed to continue.',
-    '## Files & locations',
-    '- Files created/edited/inspected and the relevant paths or line ranges.',
-    '## Tool & command results',
-    '- Notable tool/command outcomes, especially errors and their resolution status.',
-    '## Pending',
-    '- Unresolved next steps and anything explicitly requested but not yet done.',
-    '## Constraints & pins',
-    '- Durable rules, user preferences, and active/pinned skills that must survive.',
-    '',
-    'Existing heuristic summary to cross-check (may be incomplete):',
-    input.heuristicSummary.trim() || '(none)',
-    '',
-    'Conversation history to fold:',
-    transcript || '(empty)'
-  ].join('\n')
-}
-
-function compactionPromptLine(item: TurnItem): string {
-  switch (item.kind) {
-    case 'user_message':
-      return `[user] ${clipForPrompt(item.text, 2_000)}`
-    case 'assistant_text':
-      return `[assistant] ${clipForPrompt(item.text, 2_000)}`
-    case 'assistant_reasoning':
-      return ''
-    case 'tool_call':
-      return `[tool_call:${item.toolName}] ${clipForPrompt(item.summary || stringifyForPrompt(item.arguments), 1_200)}`
-    case 'tool_result':
-      return `[tool_result:${item.toolName}${item.isError ? ':error' : ''}] ${clipForPrompt(stringifyForPrompt(item.output), 2_000)}`
-    case 'approval':
-      return `[approval:${item.status}:${item.toolName}] ${clipForPrompt(item.summary, 800)}`
-    case 'user_input':
-      return `[user_input:${item.status}] ${clipForPrompt(item.prompt, 800)}`
-    case 'compaction':
-      return item.replacedTokens > 0 ? `[compaction] ${clipForPrompt(item.summary, 2_000)}` : ''
-    case 'review':
-      return `[review:${item.title}] ${clipForPrompt(item.reviewText || stringifyForPrompt(item.output), 2_000)}`
-    case 'error':
-      return `[error${item.code ? `:${item.code}` : ''}] ${clipForPrompt(item.message, 1_200)}`
-  }
-}
-
-function stringifyForPrompt(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (value == null) return ''
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return String(value)
-  }
-}
-
-function clipForPrompt(text: string, maxChars: number): string {
-  const compact = text.replace(/\s+/g, ' ').trim()
-  if (compact.length <= maxChars) return compact
-  return `${compact.slice(0, Math.max(0, maxChars - 3)).trim()}...`
-}
-
-function fitTextToBytes(text: string, maxBytes: number): string {
-  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text
-  let used = 0
-  let out = ''
-  for (const char of text) {
-    const bytes = Buffer.byteLength(char, 'utf8')
-    if (used + bytes > maxBytes) break
-    out += char
-    used += bytes
-  }
-  return `${out.trimEnd()}\n...[truncated for model compaction summary]`
-}
-
-function effectiveHistoryAfterLatestCompaction(items: TurnItem[]): TurnItem[] {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index]
-    if (item.kind === 'compaction' && item.replacedTokens > 0) {
-      return items.slice(index)
-    }
-  }
-  return items
 }
 
 function resolveModelMode(...candidates: Array<string | undefined>): { kind: 'fixed'; model: string } | { kind: 'auto' } {

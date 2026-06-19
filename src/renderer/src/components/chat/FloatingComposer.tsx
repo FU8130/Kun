@@ -29,6 +29,7 @@ import {
   Plus,
   PlayCircle,
   RotateCcw,
+  Search,
   SearchCode,
   Send,
   Sparkles,
@@ -59,6 +60,7 @@ import {
 } from '../../lib/workspace-file-index'
 import {
   COMPACT_COMMAND_ALIASES,
+  buildResearchPrompt,
   getGoalPanelDraftObjective,
   getSlashQuery,
   NEW_COMMAND_ALIASES,
@@ -66,12 +68,14 @@ import {
   parseCompactCommand,
   parseGoalCommand,
   parseNewCommand,
+  parseResearchCommand,
   parseReviewCommand,
+  RESEARCH_COMMAND_ALIASES,
   REVIEW_COMMAND_ALIASES,
   type SlashCommand,
   type SlashCommandId
 } from './floating-composer-commands'
-export { parseBtwCommand, parseCompactCommand, parseGoalCommand, parseNewCommand, parseReviewCommand } from './floating-composer-commands'
+export { buildResearchPrompt, parseBtwCommand, parseCompactCommand, parseGoalCommand, parseNewCommand, parseResearchCommand, parseReviewCommand } from './floating-composer-commands'
 import {
   formatCompactNumber,
   formatCost,
@@ -92,6 +96,7 @@ import {
   type QueuedComposerMessage
 } from './FloatingComposerQueuedMessages'
 import {
+  FloatingComposerExecutionPicker,
   type ComposerExecutionSettings
 } from './FloatingComposerExecutionPicker'
 import { ImagePreviewLightbox } from './ImagePreviewLightbox'
@@ -102,6 +107,17 @@ import type { ComposerChangedFile } from '../../lib/composer-change-summary'
 
 export type { ComposerFileReference } from '../../lib/composer-file-references'
 export type { ComposerExecutionSettings } from './FloatingComposerExecutionPicker'
+
+const CONTEXT_CAPACITY_RING_SIZE = 18
+const CONTEXT_CAPACITY_RING_STROKE = 2.25
+const CONTEXT_CAPACITY_RING_RADIUS = (CONTEXT_CAPACITY_RING_SIZE - CONTEXT_CAPACITY_RING_STROKE) / 2
+const CONTEXT_CAPACITY_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_CAPACITY_RING_RADIUS
+
+function contextCapacityColor(usedRatio: number): string {
+  if (usedRatio >= 0.9) return '#d9544e'
+  if (usedRatio >= 0.75) return '#d9920f'
+  return 'var(--ds-accent)'
+}
 
 type Props = {
   variant?: 'default' | 'compact'
@@ -118,6 +134,7 @@ type Props = {
   composerPickList: string[]
   composerModelGroups?: ModelProviderModelGroup[]
   composerReasoningEffort?: string
+  lockVisionToTextModelSwitch?: boolean
   onComposerModelChange: (modelId: string, providerId?: string) => void
   onComposerReasoningEffortChange?: (effort: ComposerReasoningEffort) => void
   onConfigureProviders?: () => void
@@ -161,6 +178,8 @@ type Props = {
   onNewCommand?: () => void
   /** Worktree parallel mode toggle (single-use per new conversation). */
   useWorktreePool?: boolean
+  worktreeBranch?: string
+  onWorktreeBranchChange?: (branch: string) => void
   onToggleWorktreeMode?: () => void
   onReviewCommand?: (target: ReviewTarget) => void
   onExecutionSettingsChange?: (patch: Partial<ComposerExecutionSettings>) => void
@@ -437,6 +456,7 @@ export function FloatingComposer({
   composerPickList,
   composerModelGroups = EMPTY_MODEL_GROUPS,
   composerReasoningEffort,
+  lockVisionToTextModelSwitch = false,
   onComposerModelChange,
   onComposerReasoningEffortChange,
   onConfigureProviders,
@@ -466,6 +486,8 @@ export function FloatingComposer({
   onPlanCommand,
   onNewCommand,
   useWorktreePool = false,
+  worktreeBranch = '',
+  onWorktreeBranchChange,
   onToggleWorktreeMode,
   onReviewCommand,
   onExecutionSettingsChange,
@@ -574,6 +596,9 @@ export function FloatingComposer({
   const canOpenComposerMenu = showComposerMenuButton
     && (canTogglePlanMode || canCreateNewThread || canOpenGoalPanel || canRunReview || canToggleWorktreeMode)
   const showToolbarStartControls = showComposerMenuButton
+  const showExecutionSettingsPicker = showIntentToolbar
+    && Boolean(executionSettings)
+    && Boolean(onExecutionSettingsChange)
   const showChangeSummary = !compact && route === 'chat' && changedFiles.length > 0
   const effectiveChangedFileStats = changedFileStats ?? changedFiles.reduce(
     (stats, file) => ({
@@ -595,6 +620,7 @@ export function FloatingComposer({
   const [selectedFileMentionIndex, setSelectedFileMentionIndex] = useState(0)
   const [dismissedFileMentionKey, setDismissedFileMentionKey] = useState<string | null>(null)
   const [composerMenuOpen, setComposerMenuOpen] = useState(false)
+  const [worktreeBranches, setWorktreeBranches] = useState<string[]>([])
   const [goalPanelOpen, setGoalPanelOpen] = useState(false)
   const [contextCapacityOpen, setContextCapacityOpen] = useState(false)
   const [goalRuntimeNowMs, setGoalRuntimeNowMs] = useState(() => Date.now())
@@ -636,12 +662,15 @@ export function FloatingComposer({
   const measuredTotalRef = useRef<number | null>(null)
   if (!busy) measuredTotalRef.current = liveMeasuredTotal
   const measuredContextTotal = busy ? measuredTotalRef.current : liveMeasuredTotal
-  // The message estimate only feeds the per-category split (popover) or the
-  // no-measured-total fallback. Never subscribe to `blocks` while streaming with
-  // the popover closed — blocks churn on every delta and re-render the whole
-  // composer. Freeze the last estimate in a ref instead.
+  // The message estimate feeds the per-category split (popover), the
+  // no-measured-total fallback, AND the sanity check that rejects an inflated
+  // measured total (some providers over-report prompt_tokens — see
+  // buildContextCapacity). We therefore need it whenever the gauge is idle, not
+  // just when the popover is open. Never subscribe to `blocks` while streaming
+  // with the popover closed — blocks churn on every delta and re-render the
+  // whole composer; the frozen ref is good enough for that transient window.
   const needMessageEstimate =
-    canShowContextCapacity && (contextCapacityOpen || measuredContextTotal == null)
+    canShowContextCapacity && (contextCapacityOpen || measuredContextTotal == null || !busy)
   const subscribeContextBlocks = needMessageEstimate && (contextCapacityOpen || !busy)
   const contextBlocks = useChatStore((s) => (subscribeContextBlocks ? s.blocks : EMPTY_CONTEXT_BLOCKS))
   const conversationTokensRef = useRef(0)
@@ -649,7 +678,7 @@ export function FloatingComposer({
     if (!subscribeContextBlocks) return conversationTokensRef.current
     // Only the slice from the most recent compaction onward is actually re-sent
     // to the model — the runtime folds everything before the latest compaction
-    // summary into it (effectiveHistoryAfterLatestCompaction). Counting the full
+    // summary into it (effective history after the latest compaction). Counting the full
     // visible history would over-state usage and hide the effect of compaction.
     let startIndex = 0
     for (let i = contextBlocks.length - 1; i >= 0; i -= 1) {
@@ -721,6 +750,25 @@ export function FloatingComposer({
           : useWorktreePool
             ? t('composerWorktreeModeHint')
             : t('composerSlashHint')
+
+  useEffect(() => {
+    if (!useWorktreePool || !effectiveWorkspaceRoot || typeof window.kunGui?.getGitBranches !== 'function') {
+      setWorktreeBranches([])
+      return
+    }
+    let cancelled = false
+    void window.kunGui.getGitBranches(effectiveWorkspaceRoot).then((result) => {
+      if (cancelled || !result.ok) return
+      const names = result.branches.map((branch) => branch.name)
+      setWorktreeBranches(names)
+      if (!worktreeBranch.trim() && result.currentBranch) {
+        onWorktreeBranchChange?.(result.currentBranch)
+      }
+    }).catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [effectiveWorkspaceRoot, onWorktreeBranchChange, useWorktreePool, worktreeBranch])
   const slashCommands = useMemo<SlashCommand[]>(() => {
     const threadActionDisabled = !runtimeReady || busy || !activeThreadId
     const goalActionDisabled = !canOpenGoalPanel
@@ -734,6 +782,14 @@ export function FloatingComposer({
         keywords: ['create', 'new', 'thread', 'chat', '会话', '新建', ...NEW_COMMAND_ALIASES],
         icon: <Plus className="h-4 w-4" strokeWidth={1.9} />,
         disabled: !canCreateNewThread
+      })
+      commands.push({
+        id: 'research',
+        title: t('slashCommandResearchTitle'),
+        description: t('slashCommandResearchDescription'),
+        keywords: ['research', 'deep', 'web', 'sources', 'papers', 'evidence', ...RESEARCH_COMMAND_ALIASES],
+        icon: <Search className="h-4 w-4" strokeWidth={1.9} />,
+        disabled: !runtimeReady
       })
     }
     if (onPlanCommand) {
@@ -1101,6 +1157,12 @@ export function FloatingComposer({
       draft.focusComposer()
       return
     }
+    if (commandId === 'research') {
+      setMode('agent')
+      setInput(buildResearchPrompt(t('slashCommandResearchPrompt'), null))
+      draft.focusComposer()
+      return
+    }
     if (commandId === 'review' && onReviewCommand) {
       setInput('')
       void onReviewCommand({ kind: 'uncommittedChanges' })
@@ -1277,6 +1339,15 @@ export function FloatingComposer({
       if (command?.disabled) return
       setInput('')
       void compactActiveThread(compactCommand.reason)
+      draft.focusComposer()
+      return
+    }
+    const researchTopic = parseResearchCommand(input)
+    if (researchTopic !== false) {
+      const command = slashCommands.find((item) => item.id === 'research')
+      if (command?.disabled) return
+      setMode('agent')
+      setInput(buildResearchPrompt(t('slashCommandResearchPrompt'), researchTopic))
       draft.focusComposer()
       return
     }
@@ -1623,7 +1694,9 @@ export function FloatingComposer({
                 className="ds-no-drag flex h-8 w-full items-center gap-2 px-3 text-left transition hover:bg-ds-hover hover:text-ds-ink disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-ds-muted"
               >
                 <GitBranch className="h-3.5 w-3.5 shrink-0" strokeWidth={1.9} />
-                <span className="min-w-0 flex-1 truncate">{t('composerMenuWorktreeMode')}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {useWorktreePool ? t('composerEnvironmentWorktree') : t('composerEnvironmentLocal')}
+                </span>
                 <span
                   role="switch"
                   aria-checked={useWorktreePool}
@@ -2065,6 +2138,14 @@ export function FloatingComposer({
                     ) : null}
                   </>
                 ) : null}
+                {showExecutionSettingsPicker && executionSettings && onExecutionSettingsChange ? (
+                  <FloatingComposerExecutionPicker
+                    value={executionSettings}
+                    applying={executionSettingsApplying}
+                    disabled={!canCompose || busy}
+                    onChange={onExecutionSettingsChange}
+                  />
+                ) : null}
               </div>
             ) : null}
             <div
@@ -2111,23 +2192,34 @@ export function FloatingComposer({
                     aria-expanded={contextCapacityOpen}
                     title={t('contextCapacityTitle')}
                   >
-                    <span
-                      className="relative flex h-1.5 w-6 overflow-hidden rounded-full"
-                      style={{ background: 'var(--ds-surface-subtle)' }}
+                    <svg
+                      className="h-[18px] w-[18px] -rotate-90 shrink-0"
+                      viewBox={`0 0 ${CONTEXT_CAPACITY_RING_SIZE} ${CONTEXT_CAPACITY_RING_SIZE}`}
                       aria-hidden="true"
                     >
-                      <span
-                        style={{
-                          width: `${Math.min(100, contextCapacity.usedRatio * 100)}%`,
-                          background:
-                            contextCapacity.usedRatio >= 0.9
-                              ? '#d9544e'
-                              : contextCapacity.usedRatio >= 0.75
-                                ? '#d9920f'
-                                : 'var(--ds-accent)'
-                        }}
+                      <circle
+                        cx={CONTEXT_CAPACITY_RING_SIZE / 2}
+                        cy={CONTEXT_CAPACITY_RING_SIZE / 2}
+                        r={CONTEXT_CAPACITY_RING_RADIUS}
+                        fill="none"
+                        stroke="var(--ds-surface-subtle)"
+                        strokeWidth={CONTEXT_CAPACITY_RING_STROKE}
                       />
-                    </span>
+                      <circle
+                        cx={CONTEXT_CAPACITY_RING_SIZE / 2}
+                        cy={CONTEXT_CAPACITY_RING_SIZE / 2}
+                        r={CONTEXT_CAPACITY_RING_RADIUS}
+                        fill="none"
+                        stroke={contextCapacityColor(contextCapacity.usedRatio)}
+                        strokeWidth={CONTEXT_CAPACITY_RING_STROKE}
+                        strokeLinecap="round"
+                        strokeDasharray={CONTEXT_CAPACITY_RING_CIRCUMFERENCE}
+                        strokeDashoffset={
+                          CONTEXT_CAPACITY_RING_CIRCUMFERENCE *
+                          (1 - Math.min(1, Math.max(0, contextCapacity.usedRatio)))
+                        }
+                      />
+                    </svg>
                     <span className="shrink-0 tabular-nums">
                       {formatPercent(contextCapacity.usedRatio)}
                     </span>
@@ -2148,6 +2240,7 @@ export function FloatingComposer({
                   composerPickList={composerPickList}
                   composerModelGroups={composerModelGroups}
                   composerReasoningEffort={composerReasoningEffort}
+                  lockVisionToTextModelSwitch={lockVisionToTextModelSwitch}
                   canChangeModel={canChangeModel}
                   stretch={stretchModelPicker}
                   onComposerModelChange={onComposerModelChange}
@@ -2217,6 +2310,23 @@ export function FloatingComposer({
               <WorkspaceProjectPicker currentWorkspaceRoot={effectiveWorkspaceRoot} />
             ) : null}
             <GitBranchPicker workspaceRoot={effectiveWorkspaceRoot} />
+            {useWorktreePool && worktreeBranches.length > 0 ? (
+              <label className="ds-no-drag inline-flex min-h-7 max-w-[220px] items-center gap-1.5 rounded-lg border border-ds-border-muted bg-ds-card/72 px-2 py-0.5 text-[12.5px] font-medium text-ds-muted shadow-sm">
+                <GitBranch className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
+                <select
+                  value={worktreeBranch || worktreeBranches[0]}
+                  onChange={(event) => onWorktreeBranchChange?.(event.target.value)}
+                  className="min-w-0 bg-transparent text-ds-muted outline-none"
+                  title={t('composerWorktreeBranch')}
+                >
+                  {worktreeBranches.map((branch) => (
+                    <option key={branch} value={branch}>
+                      {branch}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             {showThreadUsageFooter ? (
               <div
                 className="ds-composer-usage ds-no-drag inline-flex min-h-7 max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 overflow-visible rounded-lg border border-ds-border-muted bg-ds-card/72 px-2.5 py-0.5 text-[12.5px] font-medium leading-5 text-ds-muted shadow-sm"

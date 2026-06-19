@@ -82,6 +82,11 @@ type Props = {
   /** A raster image is selected instead of text: only image-aware actions
    * apply, everything text-oriented is hidden. */
   imageMode?: boolean
+  /** Called when the AI-edit textarea gains focus so the parent can freeze the
+   * selection state and keep the toolbar visible while the user types. */
+  onTextareaFocus?: () => void
+  /** Called when the AI-edit textarea loses focus so the parent can unfreeze. */
+  onTextareaBlur?: () => void
 }
 
 /**
@@ -185,7 +190,9 @@ export function WriteInlineAgent({
   onGenerateDesignDraft,
   prototypeEnabled = false,
   onGeneratePrototype,
-  imageMode = false
+  imageMode = false,
+  onTextareaFocus,
+  onTextareaBlur
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const menuRef = useRef<HTMLDivElement | null>(null)
@@ -508,6 +515,8 @@ export function WriteInlineAgent({
             disabled={inFlight}
             onChange={(event) => onValueChange(event.target.value)}
             onKeyDown={handleKeyDown}
+            onFocus={onTextareaFocus}
+            onBlur={onTextareaBlur}
           />
           {!askOnly ? (
             <button

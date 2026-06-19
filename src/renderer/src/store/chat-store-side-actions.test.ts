@@ -193,6 +193,7 @@ function buildHarness(overrides: Partial<ChatState> = {}): Harness {
     archiveThread: async () => undefined,
     compactActiveThread: async () => undefined,
     forkActiveThread: async () => undefined,
+    forkThreadFromTurn: async () => undefined,
     spawnSideConversation: async () => null,
     openSideConversationDraft: () => undefined,
     sendSideMessage: async () => false,

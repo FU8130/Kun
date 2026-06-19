@@ -7,6 +7,13 @@ import {
   mergeScheduleSettings,
   type ScheduleSettingsV1
 } from '@shared/app-settings'
+import {
+  compactHomePathForSettingsDisplay,
+  compactHomePathTextForSettingsDisplay,
+  expandHomePathForSettingsUse,
+  expandHomePathListForSettingsUse,
+  expandHomePathTextForSettingsUse
+} from '../../lib/settings-home-paths'
 
 type ScheduleModelProviderOption = {
   providerId: string
@@ -89,14 +96,14 @@ export function ScheduleDefaultsDialog({
     const selection = resolveDefaultsModelSelection(modelProviders, draft.providerId, draft.model)
     await onSave({
       enabled: draft.enabled,
-      defaultWorkspaceRoot: draft.defaultWorkspaceRoot,
+      defaultWorkspaceRoot: expandHomePathForSettingsUse(draft.defaultWorkspaceRoot),
       providerId: selection.providerId,
       model: selection.model,
       mode: 'agent',
       promptPrefix: draft.promptPrefix,
       skills: {
         defaultNames: splitLooseList(draft.defaultNames),
-        extraDirs: splitLooseList(draft.extraDirs)
+        extraDirs: expandHomePathListForSettingsUse(splitLooseList(draft.extraDirs))
       }
     })
   }
@@ -190,8 +197,9 @@ export function ScheduleDefaultsDialog({
         <label className="mt-4 flex flex-col gap-2 text-[13px] font-medium text-ds-ink">
           {t('scheduleDefaultWorkspace')}
           <input
-            value={draft.defaultWorkspaceRoot}
-            onChange={(event) => update({ defaultWorkspaceRoot: event.target.value })}
+            value={compactHomePathForSettingsDisplay(draft.defaultWorkspaceRoot)}
+            onChange={(event) =>
+              update({ defaultWorkspaceRoot: expandHomePathForSettingsUse(event.target.value) })}
             placeholder={t('scheduleWorkspacePlaceholder')}
             className="w-full rounded-xl border border-ds-border bg-ds-main/60 px-3 py-2 text-[14px] text-ds-ink outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/25"
           />
@@ -220,8 +228,9 @@ export function ScheduleDefaultsDialog({
           <label className="flex flex-col gap-2 text-[13px] font-medium text-ds-ink">
             {t('scheduleExtraSkillDirs')}
             <textarea
-              value={draft.extraDirs}
-              onChange={(event) => update({ extraDirs: event.target.value })}
+              value={compactHomePathTextForSettingsDisplay(draft.extraDirs)}
+              onChange={(event) =>
+                update({ extraDirs: expandHomePathTextForSettingsUse(event.target.value) })}
               placeholder={t('scheduleExtraSkillDirsPlaceholder')}
               className="min-h-[92px] w-full resize-y rounded-xl border border-ds-border bg-ds-main/60 px-3 py-3 text-[14px] leading-6 text-ds-ink outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/25"
             />

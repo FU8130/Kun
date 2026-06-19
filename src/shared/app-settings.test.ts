@@ -5,6 +5,7 @@ import {
   kunSettingsPatch,
   DEFAULT_KUN_DATA_DIR,
   DEFAULT_KUN_MODEL,
+  DEFAULT_LOG_RETENTION_DAYS,
   DEFAULT_APPROVAL_POLICY,
   DEFAULT_SANDBOX_MODE,
   DEFAULT_WEIXIN_BRIDGE_RPC_URL,
@@ -202,9 +203,9 @@ describe('kun defaults', () => {
         sqlitePath: ''
       },
       contextCompaction: {
-        defaultSoftThreshold: 16000,
-        defaultHardThreshold: 24000,
-        summaryMode: 'heuristic',
+        defaultSoftThreshold: 96000,
+        defaultHardThreshold: 108800,
+        summaryMode: 'model',
         summaryTimeoutMs: 15000,
         summaryMaxTokens: 1200,
         summaryInputMaxBytes: 98304
@@ -221,6 +222,17 @@ describe('kun defaults', () => {
         }
       }
     })
+  })
+})
+
+describe('log retention settings', () => {
+  it('defaults local error log retention to 3 days', () => {
+    const normalized = normalizeAppSettings({
+      ...settings(),
+      log: undefined
+    } as unknown as AppSettingsV1)
+
+    expect(normalized.log.retentionDays).toBe(DEFAULT_LOG_RETENTION_DAYS)
   })
 })
 
@@ -266,6 +278,19 @@ describe('app behavior settings', () => {
     expect(current.appBehavior.closeAction).toBe('ask')
     expect(mergeAppBehaviorSettings(current.appBehavior, { closeToTray: true }).closeAction).toBe('tray')
     expect(mergeAppBehaviorSettings(current.appBehavior, { closeToTray: false }).closeAction).toBe('quit')
+  })
+})
+
+describe('cursor spotlight settings', () => {
+  it('defaults the interaction effect on and preserves an explicit opt-out', () => {
+    expect(normalizeAppSettings({
+      ...settings(),
+      cursorSpotlight: undefined
+    }).cursorSpotlight).toBe(true)
+    expect(normalizeAppSettings({
+      ...settings(),
+      cursorSpotlight: false
+    }).cursorSpotlight).toBe(false)
   })
 })
 
@@ -485,7 +510,7 @@ describe('mergeKunRuntimeSettings', () => {
     expect(next.storage.sqlitePath).toBe('/tmp/kun.sqlite3')
     expect(next.contextCompaction.defaultSoftThreshold).toBe(64000)
     expect(next.contextCompaction.defaultHardThreshold).toBe(64000)
-    expect(next.contextCompaction.summaryMode).toBe('heuristic')
+    expect(next.contextCompaction.summaryMode).toBe('model')
     expect(next.runtimeTuning.toolStorm.enabled).toBe(true)
     expect(next.runtimeTuning.toolStorm.windowSize).toBe(current.runtimeTuning.toolStorm.windowSize)
     expect(next.runtimeTuning.toolStorm.threshold).toBe(5)

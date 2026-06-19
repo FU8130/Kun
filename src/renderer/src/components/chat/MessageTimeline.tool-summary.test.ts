@@ -564,6 +564,39 @@ describe('MessageTimeline Kun runtime metadata smoke', () => {
     expect(html).not.toContain('running timeline detail should stay collapsed')
   })
 
+  it('renders running compaction as a lightweight status divider', () => {
+    const blocks: ChatBlock[] = [
+      {
+        kind: 'compaction',
+        id: 'compact_1',
+        summary: 'Context compacted',
+        status: 'running',
+        auto: false
+      }
+    ]
+    useChatStore.setState({
+      busy: true,
+      currentTurnUserId: null,
+      turnStartedAtByUserId: {}
+    })
+
+    const html = renderToStaticMarkup(
+      createElement(MessageTimeline, {
+        blocks,
+        liveReasoning: '',
+        live: '',
+        activeThreadId: 'thr_1',
+        runtimeConnection: 'ready',
+        onRetryConnection: () => undefined,
+        onOpenSettings: () => undefined
+      })
+    )
+
+    expect(html).toContain('role="status"')
+    expect(html).toMatch(/Compacting context|compactionRunning|正在压缩上下文/)
+    expect(html).not.toContain('aria-expanded=')
+  })
+
   it('keeps completed runtime errors visible instead of folding them into the work summary', () => {
     const blocks: ChatBlock[] = [
       {
@@ -619,6 +652,42 @@ describe('MessageTimeline Kun runtime metadata smoke', () => {
   it('pushes the live progress row above the goal banner when a goal is active', () => {
     expect(liveTurnProgressClass(true)).toContain('mb-16 md:mb-20')
     expect(liveTurnProgressClass(false)).not.toContain('mb-16 md:mb-20')
+  })
+
+  it('renders the fork action before copy in completed assistant response actions', () => {
+    const blocks: ChatBlock[] = [
+      {
+        kind: 'user',
+        id: 'user_1',
+        turnId: 'turn_1',
+        text: 'say hi'
+      },
+      {
+        kind: 'assistant',
+        id: 'assistant_1',
+        turnId: 'turn_1',
+        text: 'hello'
+      }
+    ]
+
+    const html = renderToStaticMarkup(
+      createElement(MessageTimeline, {
+        blocks,
+        liveReasoning: '',
+        live: '',
+        activeThreadId: 'thr_1',
+        runtimeConnection: 'ready',
+        onRetryConnection: () => undefined,
+        onOpenSettings: () => undefined
+      })
+    )
+
+    expect(html).toMatch(/forkResponse|Fork response|分叉回答/)
+    expect(html).toMatch(/forkFromAssistantResponse|Fork a new thread from this response|从这条回答分叉新会话/)
+    const forkIndex = html.search(/forkFromAssistantResponse|Fork a new thread from this response|从这条回答分叉新会话/)
+    const copyIndex = html.slice(forkIndex).search(/copyMessage|Copy message|复制消息/)
+    expect(forkIndex).toBeGreaterThanOrEqual(0)
+    expect(copyIndex).toBeGreaterThan(0)
   })
 
   it('renders the live assistant bubble while busy is true (streaming period)', () => {

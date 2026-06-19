@@ -1,6 +1,6 @@
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { CapabilityRegistry } from '../src/adapters/tool/capability-registry.js'
 import { LocalToolHost } from '../src/adapters/tool/local-tool-host.js'
@@ -80,7 +80,7 @@ describe('Memory store and recall', () => {
 
     const disabled = await dispatchRequest(
       h.router,
-      new Request(`http://localhost/v1/memory/${body.memory.id}`, {
+      new Request(`http://localhost/v1/memory/${body.memory.id}?workspace=/tmp/ws`, {
         method: 'PATCH',
         headers: { authorization: 'Bearer tok-1', 'content-type': 'application/json' },
         body: JSON.stringify({ disabled: true })
@@ -89,7 +89,7 @@ describe('Memory store and recall', () => {
     expect(disabled.status).toBe(200)
     const deleted = await dispatchRequest(
       h.router,
-      new Request(`http://localhost/v1/memory/${body.memory.id}`, {
+      new Request(`http://localhost/v1/memory/${body.memory.id}?workspace=/tmp/ws`, {
         method: 'DELETE',
         headers: { authorization: 'Bearer tok-1' }
       })
@@ -113,7 +113,7 @@ describe('Memory store and recall', () => {
     const result = await host.execute({
       callId: 'call_1',
       toolName: 'memory_create',
-      arguments: { content: 'Use pnpm', workspace: '/tmp/ws' }
+      arguments: { content: 'Use pnpm', workspace: '/tmp/forged' }
     }, {
       threadId: 'thr_1',
       turnId: 'turn_1',
@@ -129,6 +129,7 @@ describe('Memory store and recall', () => {
     expect(approvals).toBe(1)
     expect(result.item).toMatchObject({ kind: 'tool_result', isError: false })
     expect(await store.list({ workspace: '/tmp/ws' })).toHaveLength(1)
+    expect(await store.list({ workspace: '/tmp/forged' })).toEqual([])
   })
 
   it('injects relevant memories into AgentLoop metadata and stops after deletion', async () => {
@@ -165,6 +166,40 @@ describe('Memory store and recall', () => {
     expect(finalInstructions).toContain('<shell_environment>')
   })
 
+  it('injects project memory into new threads only inside the same project', async () => {
+    const store = createStore()
+    const memory = await store.create({
+      content: 'Project Alpha release command is pnpm ship',
+      scope: 'project',
+      workspace: '/tmp/project-alpha'
+    })
+    const seenRequests: ModelRequest[] = []
+    const model: ModelClient = {
+      provider: 'fake',
+      model: 'fake',
+      async *stream(request) {
+        seenRequests.push(request)
+        yield { kind: 'completed', stopReason: 'stop' }
+      }
+    }
+
+    const sameProject = makeHarness(model, { memoryStore: store })
+    await bootstrapThread(sameProject, {
+      workspace: '/tmp/project-alpha',
+      request: { prompt: 'What is the pnpm release command?' }
+    })
+    await sameProject.loop.runTurn(sameProject.threadId, sameProject.turnId)
+    expect(seenRequests.at(-1)?.contextInstructions?.join('\n')).toContain(memory.id)
+
+    const otherProject = makeHarness(model, { memoryStore: store })
+    await bootstrapThread(otherProject, {
+      workspace: '/tmp/project-beta',
+      request: { prompt: 'What is the pnpm release command?' }
+    })
+    await otherProject.loop.runTurn(otherProject.threadId, otherProject.turnId)
+    expect(seenRequests.at(-1)?.contextInstructions?.join('\n')).not.toContain(memory.id)
+  })
+
   it('retrieves memories for CJK queries (regression: token-split-on-[^a-z0-9_])', async () => {
     const store = createStore()
     // Use workspace scope so this exercises the scored n-gram path. (user scope
@@ -187,17 +222,49 @@ describe('Memory store and recall', () => {
     expect(misses).toEqual([])
   })
 
-  it('retrieves workspace-scope memories that have no workspace field (GUI-created)', async () => {
+  it('quarantines legacy workspace memories that have no workspace field', async () => {
     const store = createStore()
-    // GUI-created workspace memories may omit the workspace field. They should
-    // still be retrievable instead of being silently filtered out by inScope.
+    // Older GUI versions created unbound workspace memories. Treating them as
+    // global leaks their contents into every project, so they must stay out of
+    // retrieval until the user recreates them with an explicit workspace.
     const memory = await store.create({
       content: 'Workspace prefers tabs over spaces',
       scope: 'workspace'
     })
     expect(memory.workspace).toBeUndefined()
     const hits = await store.retrieve({ query: 'tabs spaces indentation', workspace: '/tmp/ws', limit: 3 })
-    expect(hits.map((item) => item.id)).toEqual([memory.id])
+    expect(hits).toEqual([])
+  })
+
+  it('isolates project memories and scope-protects mutations', async () => {
+    const store = createStore()
+    const memory = await store.create({
+      content: 'Project Alpha deploys with pnpm',
+      scope: 'project',
+      workspace: '/tmp/project-alpha'
+    })
+
+    const expectedProject = resolve('/tmp/project-alpha')
+    expect(memory.project).toBe(process.platform === 'win32' ? expectedProject.toLowerCase() : expectedProject)
+    expect(await store.retrieve({
+      query: 'pnpm deploy',
+      workspace: '/tmp/project-alpha/.',
+      limit: 3
+    })).toHaveLength(1)
+    expect(await store.retrieve({
+      query: 'pnpm deploy',
+      workspace: '/tmp/project-beta',
+      limit: 3
+    })).toEqual([])
+    await expect(store.update(memory.id, { content: 'leaked' }, {
+      workspace: '/tmp/project-beta'
+    })).rejects.toThrow(`memory not found: ${memory.id}`)
+    await expect(store.delete(memory.id, {
+      workspace: '/tmp/project-beta'
+    })).rejects.toThrow(`memory not found: ${memory.id}`)
+    await expect(store.update(memory.id, { content: 'Project Alpha uses npm' }, {
+      workspace: '/tmp/project-alpha'
+    })).resolves.toMatchObject({ content: 'Project Alpha uses npm' })
   })
 
   it('injects user-scope memories on semantic queries with zero keyword overlap', async () => {

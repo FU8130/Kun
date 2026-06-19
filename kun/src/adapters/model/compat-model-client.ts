@@ -18,6 +18,7 @@ import {
   usesChatCompletionsShape,
   type ModelEndpointFormat
 } from '../../contracts/model-endpoint-format.js'
+import { createProxyFetch } from './proxy-fetch.js'
 
 /**
  * Configuration for the compatible HTTP model client. Chat
@@ -34,6 +35,8 @@ export type CompatModelClientConfig = {
   headers?: Record<string, string>
   /** HTTP fetch implementation. Defaults to global `fetch`. */
   fetchImpl?: typeof fetch
+  /** Optional proxy URL used only for model HTTP requests. */
+  modelProxyUrl?: string
   /** Maximum number of messages to send. Defaults to the entire history. */
   historyLimit?: number
   /** When true, the client requests a non-streaming response. */
@@ -162,7 +165,7 @@ export class CompatModelClient implements ModelClient {
   constructor(config: CompatModelClientConfig) {
     this.config = config
     this.model = config.model
-    this.fetchImpl = config.fetchImpl ?? fetch
+    this.fetchImpl = config.fetchImpl ?? createProxyFetch(config.modelProxyUrl ?? '') ?? fetch
   }
 
   /**

@@ -55,7 +55,7 @@ export function SidebarFrame({
         className
       )}
     >
-      <div className="ds-sidebar-titlebar-spacer shrink-0 pb-5 pt-3">
+      <div className="ds-sidebar-titlebar-spacer shrink-0 pb-2 pt-2">
         <div className="ds-sidebar-titlebar-row flex min-h-[34px] items-start justify-between">
           <div aria-hidden className="ds-titlebar-safe-block min-w-[86px]" />
           {onCollapse ? (
@@ -110,6 +110,7 @@ export function SidebarCommandRow({
   return (
     <button
       type="button"
+      data-cursor-spotlight-target
       disabled={disabled}
       title={disabled ? disabledHint : undefined}
       onClick={onClick}
@@ -204,6 +205,7 @@ export function SidebarIconButton({
   return (
     <button
       type="button"
+      data-cursor-spotlight-target
       disabled={disabled}
       onPointerDown={(event) => {
         if (stopPropagation) event.stopPropagation()
@@ -240,7 +242,7 @@ export function SidebarSearchField({
   onChange
 }: SidebarSearchFieldProps): ReactElement {
   return (
-    <label className="relative min-w-0 flex-1">
+    <label data-cursor-spotlight-target className="relative min-w-0 flex-1 rounded-[8px]">
       <Search
         className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ds-faint"
         strokeWidth={1.8}
@@ -254,6 +256,7 @@ export function SidebarSearchField({
       {value.trim() ? (
         <button
           type="button"
+          data-cursor-spotlight-target
           onClick={() => onChange('')}
           className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-[#9a9a9a] transition hover:bg-[var(--ds-sidebar-row-hover)] hover:text-[#1f1f1f] dark:hover:text-white"
           title={clearLabel}
@@ -320,6 +323,7 @@ export function SidebarTreeRow({
 
   return (
     <div
+      data-cursor-spotlight-target
       className={cx(
         'group relative flex w-full items-center overflow-hidden rounded-[8px] text-[13px] font-normal transition',
         outlined

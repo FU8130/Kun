@@ -2,7 +2,7 @@ import type { NormalizedThread } from '../agent/types'
 import { getProvider } from '../agent/registry'
 import { rendererRuntimeClient } from '../agent/runtime-client'
 import i18n from '../i18n'
-import { applyTheme, applyUiFontScale, applyWriteTypography } from '../lib/apply-theme'
+import { applyCursorSpotlight, applyTheme, applyUiFontScale, applyWriteTypography } from '../lib/apply-theme'
 import { formatWorkspacePickerError } from '../lib/format-workspace-picker-error'
 import { formatRuntimeError, getRuntimeErrorCode } from '../lib/format-runtime-error'
 import {
@@ -101,6 +101,7 @@ type StoreActionContext = {
 let bootPromise: Promise<void> | null = null
 let clawChannelActivityUnsubscribe: (() => void) | null = null
 let runtimeStatusUnsubscribe: (() => void) | null = null
+let trayActionUnsubscribe: (() => void) | null = null
 
 export function createNavigationActions(
   { set, get, sseAbortRef }: StoreActionContext
@@ -367,11 +368,16 @@ export function createNavigationActions(
         const needsInitialSetup = !getActiveAgentApiKey(settings).trim()
         applyTheme(settings.theme)
         applyUiFontScale(settings.uiFontScale)
+        applyCursorSpotlight(settings.cursorSpotlight !== false)
         if (settings.write?.typography) applyWriteTypography(settings.write.typography)
         await get().applyI18nFromSettings(settings.locale)
         if (!runtimeStatusUnsubscribe && typeof window.kunGui.onRuntimeStatus === 'function') {
           runtimeStatusUnsubscribe = window.kunGui.onRuntimeStatus((status) => {
             set({ runtimeStatus: status })
+            if (status.state === 'restarting' || status.state === 'crashed') {
+              set({ error: null, runtimeErrorDetail: null })
+              return
+            }
             if (status.state === 'failed' || status.state === 'stopped') {
               // Terminal states reuse the main error banner, which carries
               // the full diagnostics UI (details, log path, settings).
@@ -385,6 +391,16 @@ export function createNavigationActions(
                 // On-disk settings were restored by the rollback; refresh the cache.
                 void rendererRuntimeClient.getSettings({ forceRefresh: true }).catch(() => null)
               }
+            }
+          })
+        }
+        if (!trayActionUnsubscribe && typeof window.kunGui.onTrayAction === 'function') {
+          trayActionUnsubscribe = window.kunGui.onTrayAction((action) => {
+            set({ route: 'chat' })
+            if (action.type === 'open-thread') {
+              void get().selectThread(action.threadId)
+            } else {
+              void get().createThread({ forceNew: true })
             }
           })
         }

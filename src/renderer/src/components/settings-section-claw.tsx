@@ -14,6 +14,8 @@ type ClawSettingsContext = {
   form: AppSettingsV1
   update: (partial: AppSettingsPatch) => void
   selectControlClass: string
+  compactHomePath: (path: string) => string
+  expandHomePath: (path: string) => string
   pickClawWorkspace: () => Promise<void>
   resetClawWorkspaceToDefault: () => void
   clawWorkspacePickerError: string | null
@@ -84,6 +86,8 @@ export function ClawSettingsSection({ ctx }: { ctx: ClawSettingsContext }): Reac
     form,
     update,
     selectControlClass,
+    compactHomePath,
+    expandHomePath,
     pickClawWorkspace,
     resetClawWorkspaceToDefault,
     clawWorkspacePickerError
@@ -110,17 +114,17 @@ export function ClawSettingsSection({ ctx }: { ctx: ClawSettingsContext }): Reac
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input
                   className={textInputClass()}
-                  value={form.claw.im.workspaceRoot}
+                  value={compactHomePath(form.claw.im.workspaceRoot)}
                   onChange={(e) =>
                     update({
                       claw: {
                         im: {
-                          workspaceRoot: e.target.value
+                          workspaceRoot: expandHomePath(e.target.value)
                         }
                       }
                     })
                   }
-                  placeholder={t('clawDefaultWorkspacePlaceholder', { path: form.workspaceRoot })}
+                  placeholder={t('clawDefaultWorkspacePlaceholder', { path: compactHomePath(form.workspaceRoot) })}
                 />
                 <button
                   type="button"
@@ -165,6 +169,8 @@ export function ClawSettingsSection({ ctx }: { ctx: ClawSettingsContext }): Reac
                         provider: 'Feishu / Lark',
                         model: channel.model,
                         workspace: channelEffectiveWorkspace(form, channel)
+                          ? compactHomePath(channelEffectiveWorkspace(form, channel))
+                          : ''
                       })}
                     </div>
                   </div>
@@ -231,10 +237,11 @@ export function ClawSettingsSection({ ctx }: { ctx: ClawSettingsContext }): Reac
                     </span>
                     <input
                       className={textInputClass()}
-                      value={channel.workspaceRoot}
-                      onChange={(e) => updateChannel(form, update, channel.id, { workspaceRoot: e.target.value })}
+                      value={compactHomePath(channel.workspaceRoot)}
+                      onChange={(e) =>
+                        updateChannel(form, update, channel.id, { workspaceRoot: expandHomePath(e.target.value) })}
                       placeholder={t('clawWorkspaceInherit', {
-                        path: form.claw.im.workspaceRoot.trim() || form.workspaceRoot
+                        path: compactHomePath(form.claw.im.workspaceRoot.trim() || form.workspaceRoot)
                       })}
                     />
                   </label>

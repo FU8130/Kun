@@ -22,12 +22,14 @@ import {
   listSpeechToTextProviderProfiles,
   listTextToSpeechProviderProfiles,
   listVideoGenerationProviderProfiles,
+  modelProviderModelProfilesForSettings,
   listModelProviderModelIds,
   modelSupportsImageInput,
   normalizeModelProviderSettings,
   resolveKunImageGenerationSettings,
   resolveKunMusicGenerationSettings,
   resolveModelProviderBaseUrl,
+  resolveModelProviderProxyUrl,
   resolveKunRuntimeSettings,
   resolveKunSpeechToTextSettings,
   resolveKunTextToSpeechSettings,
@@ -90,6 +92,38 @@ describe('model provider settings', () => {
     expect(runtime.endpointFormat).toBe('messages')
   })
 
+  it('normalizes and resolves model request proxy settings', () => {
+    const provider = normalizeModelProviderSettings({
+      proxy: {
+        enabled: true,
+        url: ' socks5://127.0.0.1:1080 '
+      }
+    })
+
+    expect(provider.proxy).toEqual({
+      enabled: true,
+      url: 'socks5://127.0.0.1:1080'
+    })
+
+    const state = settings()
+    state.provider.proxy = provider.proxy
+    expect(resolveModelProviderProxyUrl(state)).toBe('socks5://127.0.0.1:1080')
+  })
+
+  it('disables invalid model request proxy URLs', () => {
+    const provider = normalizeModelProviderSettings({
+      proxy: {
+        enabled: true,
+        url: 'ftp://127.0.0.1:2121'
+      }
+    })
+
+    expect(provider.proxy).toEqual({
+      enabled: false,
+      url: ''
+    })
+  })
+
   it('keeps legacy Kun runtime credential overrides only when no provider is selected', () => {
     const state = settings()
     state.agents.kun.providerId = ''
@@ -113,6 +147,27 @@ describe('model provider settings', () => {
     // The keyless provider must not erase a configured key — otherwise the
     // settings-apply gate reads "no API key" and strands a healthy runtime.
     expect(runtime.apiKey).toBe('sk-runtime-fallback')
+  })
+
+  it('uses a 128k context window for custom provider models without explicit context metadata', () => {
+    const state = settings()
+    state.provider.providers = state.provider.providers.map((provider) =>
+      provider.id === 'custom'
+        ? {
+            ...provider,
+            modelProfiles: {
+              'custom-model': {
+                inputModalities: ['text'],
+                outputModalities: ['text'],
+                supportsToolCalling: true,
+                messageParts: ['text']
+              }
+            }
+          }
+        : provider
+    )
+
+    expect(modelProviderModelProfilesForSettings(state)['custom-model'].contextWindowTokens).toBe(128_000)
   })
 
   it('creates Xiaomi and MiniMax provider presets for Kun runtime profiles', () => {

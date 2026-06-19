@@ -1,5 +1,5 @@
 import type { ReactElement, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   TerminalSquare,
@@ -19,6 +19,7 @@ import {
   TERMINAL_DEFAULT_COLS,
   TERMINAL_DEFAULT_ROWS
 } from '@shared/terminal'
+import { terminalSessionIdForWorkspace, terminalWorkspaceSessionKey } from './terminal-session'
 
 type Props = {
   className?: string
@@ -40,6 +41,11 @@ type TerminalTabContextMenu = {
   y: number
 }
 
+type TerminalTabState = {
+  tabs: TerminalTab[]
+  activeTabId: string
+}
+
 type RgbaColor = {
   r: number
   g: number
@@ -56,6 +62,13 @@ const TERMINAL_SCROLLBACK = 5000
 const FIT_DEBOUNCE_MS = 80
 const INITIAL_TAB_ID = 'main'
 const MAX_RENDERER_TABS = 8
+
+function initialTerminalTabState(): TerminalTabState {
+  return {
+    tabs: [{ id: INITIAL_TAB_ID, index: 1 }],
+    activeTabId: INITIAL_TAB_ID
+  }
+}
 
 const DARK_THEME = {
   background: '#151d31',
@@ -186,18 +199,45 @@ export function TerminalPanel({ className = '', workspaceRoot, onCollapse, heigh
   const attachTokenRef = useRef(0)
   const [error, setError] = useState<string | null>(null)
   const [exited, setExited] = useState(false)
-  const [tabs, setTabs] = useState<TerminalTab[]>([{ id: INITIAL_TAB_ID, index: 1 }])
-  const [activeTabId, setActiveTabId] = useState(INITIAL_TAB_ID)
+  const [tabs, setTabs] = useState<TerminalTab[]>(() => initialTerminalTabState().tabs)
+  const [activeTabId, setActiveTabId] = useState(() => initialTerminalTabState().activeTabId)
   const [contextMenu, setContextMenu] = useState<TerminalTabContextMenu | null>(null)
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const renameInputRef = useRef<HTMLInputElement | null>(null)
   const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const workspaceTabStatesRef = useRef<Record<string, TerminalTabState>>({})
+  const workspaceKeyRef = useRef(terminalWorkspaceSessionKey(workspaceRoot))
+  const tabsRef = useRef(tabs)
+  const activeTabIdRef = useRef(activeTabId)
+  const workspaceKey = terminalWorkspaceSessionKey(workspaceRoot)
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]
+
+  tabsRef.current = tabs
+  activeTabIdRef.current = activeTabId
 
   const getTabTitle = useCallback((tab: TerminalTab): string => {
     return tab.title?.trim() || t('terminalTabTitle', { index: tab.index })
   }, [t])
+
+  useLayoutEffect(() => {
+    const previousKey = workspaceKeyRef.current
+    if (previousKey === workspaceKey) return
+    workspaceTabStatesRef.current[previousKey] = {
+      tabs: tabsRef.current,
+      activeTabId: activeTabIdRef.current
+    }
+    const next = workspaceTabStatesRef.current[workspaceKey] ?? initialTerminalTabState()
+    const nextActiveId = next.tabs.some((tab) => tab.id === next.activeTabId)
+      ? next.activeTabId
+      : (next.tabs[0]?.id ?? INITIAL_TAB_ID)
+    workspaceKeyRef.current = workspaceKey
+    setTabs(next.tabs.length > 0 ? next.tabs : initialTerminalTabState().tabs)
+    setActiveTabId(nextActiveId)
+    setContextMenu(null)
+    setRenamingTabId(null)
+    setRenameValue('')
+  }, [workspaceKey])
 
   const disposeRenderer = useCallback(() => {
     const term = termRef.current
@@ -214,7 +254,12 @@ export function TerminalPanel({ className = '', workspaceRoot, onCollapse, heigh
   // On unmount we dispose only the xterm renderer; the underlying PTY stays
   // alive in the main process so toggling the panel preserves shell state
   // and replays recent output from the ring buffer on re-attach.
-  const attachTerminal = useCallback(async (sessionId: string) => {
+  const sessionIdForTab = useCallback((tabId: string): string => {
+    return terminalSessionIdForWorkspace(workspaceRoot, tabId)
+  }, [workspaceRoot])
+
+  const attachTerminal = useCallback(async (tabId: string) => {
+    const sessionId = sessionIdForTab(tabId)
     const attachToken = ++attachTokenRef.current
     const isCurrentAttach = (): boolean => aliveRef.current && attachTokenRef.current === attachToken
     const container = containerRef.current
@@ -334,7 +379,7 @@ export function TerminalPanel({ className = '', workspaceRoot, onCollapse, heigh
       resizeObserver.disconnect()
       if (resizeTimer) clearTimeout(resizeTimer)
     }
-  }, [workspaceRoot])
+  }, [sessionIdForTab, workspaceRoot])
 
   useEffect(() => {
     aliveRef.current = true
@@ -393,7 +438,7 @@ export function TerminalPanel({ className = '', workspaceRoot, onCollapse, heigh
   const handleCloseTab = useCallback((tabId: string) => {
     const closingIndex = tabs.findIndex((tab) => tab.id === tabId)
     if (closingIndex === -1) return
-    void window.kunGui.disposeTerminal(tabId)
+    void window.kunGui.disposeTerminal(sessionIdForTab(tabId))
     setTabs((current) => {
       if (current.length <= 1) return current
       return current.filter((tab) => tab.id !== tabId)
@@ -402,7 +447,7 @@ export function TerminalPanel({ className = '', workspaceRoot, onCollapse, heigh
       const nextTab = tabs[closingIndex + 1] ?? tabs[closingIndex - 1] ?? tabs[0]
       if (nextTab && nextTab.id !== tabId) setActiveTabId(nextTab.id)
     }
-  }, [activeTabId, tabs])
+  }, [activeTabId, sessionIdForTab, tabs])
 
   const openTabContextMenu = useCallback((event: ReactMouseEvent | ReactPointerEvent, tabId: string) => {
     event.preventDefault()
@@ -461,30 +506,31 @@ export function TerminalPanel({ className = '', workspaceRoot, onCollapse, heigh
     const keptTab = tabs.find((tab) => tab.id === tabId)
     if (!keptTab) return
     for (const tab of tabs) {
-      if (tab.id !== tabId) void window.kunGui.disposeTerminal(tab.id)
+      if (tab.id !== tabId) void window.kunGui.disposeTerminal(sessionIdForTab(tab.id))
     }
     setTabs([keptTab])
     setActiveTabId(tabId)
     setContextMenu(null)
     if (renamingTabId && renamingTabId !== tabId) cancelRenameTab()
-  }, [cancelRenameTab, renamingTabId, tabs])
+  }, [cancelRenameTab, renamingTabId, sessionIdForTab, tabs])
 
   const handleCloseAllTabs = useCallback(() => {
     for (const tab of tabs) {
-      void window.kunGui.disposeTerminal(tab.id)
+      void window.kunGui.disposeTerminal(sessionIdForTab(tab.id))
     }
     setContextMenu(null)
     cancelRenameTab()
-    setTabs([{ id: INITIAL_TAB_ID, index: 1 }])
-    setActiveTabId(INITIAL_TAB_ID)
+    const next = initialTerminalTabState()
+    setTabs(next.tabs)
+    setActiveTabId(next.activeTabId)
     onCollapse()
-  }, [cancelRenameTab, onCollapse, tabs])
+  }, [cancelRenameTab, onCollapse, sessionIdForTab, tabs])
 
   const handleRestart = useCallback(async () => {
     if (!activeTab) return
     // Dispose the old shell then re-attach so a fresh one spawns.
     try {
-      await window.kunGui.disposeTerminal(activeTab.id)
+      await window.kunGui.disposeTerminal(sessionIdForTab(activeTab.id))
     } catch {
       /* ignore */
     }
@@ -493,7 +539,7 @@ export function TerminalPanel({ className = '', workspaceRoot, onCollapse, heigh
     disposeRenderer()
     aliveRef.current = true
     void attachTerminal(activeTab.id)
-  }, [activeTab, attachTerminal, disposeRenderer])
+  }, [activeTab, attachTerminal, disposeRenderer, sessionIdForTab])
 
   return (
     <aside
