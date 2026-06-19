@@ -512,6 +512,7 @@ export function Workbench(): ReactElement {
   const sddTitleSyncTimerRef = useRef<number | null>(null)
   const lastSyncedSddTitleRef = useRef<Record<string, string>>({})
   const timelineBlocks = blocks
+  const lockVisionToTextModelSwitch = route === 'chat' && timelineBlocks.some((block) => block.kind === 'user')
   const timelineLiveReasoning = liveReasoning
   const timelineLiveAssistant = liveAssistant
   const devPreviewBlocks = useMemo<ChatBlock[]>(() => {
@@ -2593,6 +2594,7 @@ export function Workbench(): ReactElement {
                 composerReasoningEffort={
                   route === 'chat' || route === 'claw' ? composerReasoningEffort : undefined
                 }
+                lockVisionToTextModelSwitch={lockVisionToTextModelSwitch}
                 onComposerModelChange={(modelId, providerId) => {
                   if (route === 'claw' && activeClawChannelId) {
                     void setClawChannelModel(activeClawChannelId, modelId)

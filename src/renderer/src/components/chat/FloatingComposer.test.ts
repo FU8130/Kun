@@ -23,6 +23,7 @@ import {
   composerModelMenuItemSelected,
   composerMenuSupportsModel,
   composerReasoningEffortRequestValue,
+  canSwitchComposerModelFromCurrent,
   filterComposerModelIds,
   normalizeComposerReasoningEffort
 } from './FloatingComposerModelPicker'
@@ -445,6 +446,25 @@ describe('FloatingComposer model controls', () => {
     expect(filterComposerModelIds(modelIds, '')).toEqual(modelIds)
     expect(filterComposerModelIds(modelIds, 'max')).toEqual(['MiniMax-M2'])
     expect(filterComposerModelIds(modelIds, '128K')).toEqual(['moonshot-v1-128k'])
+  })
+
+  it('prevents switching from a vision model to a text-only model', () => {
+    const visionProfile: Parameters<typeof canSwitchComposerModelFromCurrent>[0] = {
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      supportsToolCalling: true,
+      messageParts: ['text', 'image_url']
+    }
+    const textProfile: Parameters<typeof canSwitchComposerModelFromCurrent>[1] = {
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+      supportsToolCalling: true,
+      messageParts: ['text']
+    }
+
+    expect(canSwitchComposerModelFromCurrent(visionProfile, textProfile)).toBe(false)
+    expect(canSwitchComposerModelFromCurrent(visionProfile, visionProfile)).toBe(true)
+    expect(canSwitchComposerModelFromCurrent(textProfile, visionProfile)).toBe(true)
   })
 
   it('keeps the reasoning strength visible in the model control', () => {
