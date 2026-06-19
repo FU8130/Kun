@@ -11,6 +11,7 @@ import {
   VIDEO_GENERATION_PROTOCOLS
 } from '@shared/app-settings'
 import { ModelSelect, SecretInput, SettingsCard, SettingRow, Toggle } from './settings-controls'
+import { ImageGenerationSettingsSection } from './settings-section-image-generation'
 
 const AUDIO_FORMATS = ['mp3', 'wav', 'flac'] as const
 const VIDEO_RESOLUTIONS = ['768P', '1080P'] as const
@@ -149,6 +150,8 @@ export function MediaGenerationSettingsSection({ ctx }: { ctx: Record<string, an
           {t('mediaGenerationDesc')}
         </div>
       </SettingsCard>
+
+      <ImageGenerationSettingsSection ctx={ctx} />
 
       <SettingsCard title={t('textToSpeech')}>
         <SettingRow

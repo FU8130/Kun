@@ -1,7 +1,7 @@
 import type { Dispatch, ReactElement, SetStateAction } from 'react'
-import { Archive, AudioLines, Bot, BrainCircuit, GitBranch, Bug, ChevronLeft, Globe, ImageIcon, Keyboard, Mic, PencilLine, RefreshCw, ServerCog, Settings, ShieldCheck, Smartphone, Sparkles } from 'lucide-react'
+import { Archive, AudioLines, Bot, BrainCircuit, GitBranch, Bug, ChevronLeft, Globe, Keyboard, Mic, PencilLine, RefreshCw, ServerCog, Settings, ShieldCheck, Smartphone, Sparkles } from 'lucide-react'
 
-type SettingsCategory = 'general' | 'providers' | 'write' | 'imageGeneration' | 'mediaGeneration' | 'speechToText' | 'agents' | 'archives' | 'permissions' | 'worktree' | 'memory' | 'shortcuts' | 'easterEgg' | 'claw' | 'updates' | 'debug'
+type SettingsCategory = 'general' | 'providers' | 'write' | 'mediaGeneration' | 'speechToText' | 'agents' | 'archives' | 'permissions' | 'worktree' | 'memory' | 'shortcuts' | 'easterEgg' | 'claw' | 'updates' | 'debug'
 
 export function SettingsSidebar({
   category,
@@ -46,14 +46,6 @@ export function SettingsSidebar({
         <button type="button" className={catCls('write')} onClick={() => setCategory('write')}>
           <PencilLine className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
           {t('write')}
-        </button>
-        <button
-          type="button"
-          className={catCls('imageGeneration')}
-          onClick={() => setCategory('imageGeneration')}
-        >
-          <ImageIcon className="h-4 w-4 shrink-0 opacity-70" strokeWidth={1.75} />
-          {t('imageGen')}
         </button>
         <button
           type="button"

@@ -529,7 +529,7 @@
   "imageGenTimeout": "超时（毫秒）",
   "imageGenTimeoutDesc": "单次图片请求的超时时间。高分辨率出图可能需要数分钟。",
   "mediaGeneration": "媒体生成",
-  "mediaGenerationDesc": "把语音、音乐和视频生成配置成 Agent 可调用工具。启用后会分别注册 generate_speech、generate_music 和 generate_video。",
+  "mediaGenerationDesc": "把图片、语音、音乐和视频生成配置成 Agent 可调用工具。启用后会按配置注册 generate_image、generate_speech、generate_music 和 generate_video。",
   "textToSpeech": "语音生成",
   "textToSpeechEnabled": "启用语音生成",
   "textToSpeechEnabledDesc": "启用 Agent 对话里的 generate_speech 工具，把文本生成语音文件。",

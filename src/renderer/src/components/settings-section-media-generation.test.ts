@@ -6,6 +6,9 @@ import { MediaGenerationSettingsSection } from './settings-section-media-generat
 const labels: Record<string, string> = {
   mediaGeneration: 'Media generation',
   mediaGenerationDesc: 'Expose media tools',
+  imageGen: 'Image generation',
+  imageGenEnabled: 'Enable image generation',
+  imageGenEnabledDesc: 'Enable generate_image',
   textToSpeech: 'Speech generation',
   textToSpeechEnabled: 'Enable speech generation',
   textToSpeechEnabledDesc: 'Enable generate_speech',
@@ -128,6 +131,8 @@ describe('MediaGenerationSettingsSection', () => {
     }))
 
     expect(html).toContain('Media generation')
+    expect(html).toContain('Image generation')
+    expect(html).toContain('Enable generate_image')
     expect(html).toContain('Speech generation')
     expect(html).toContain('speech-2.8-hd')
     expect(html).toContain('Music generation')

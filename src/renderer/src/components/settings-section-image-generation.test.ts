@@ -10,6 +10,7 @@ const labels: Record<string, string> = {
   general: 'General',
   write: 'Write',
   agents: 'AI assistant',
+  mediaGeneration: 'Media generation',
   keyboardShortcuts: 'Keyboard shortcuts',
   claw: 'Connect phone',
   settingsFooter: 'Settings',
@@ -67,19 +68,21 @@ describe('ImageGenerationSettingsSection', () => {
     expect(html).toContain('value="240000"')
   })
 
-  it('places the image generation tab between Write and AI assistant', () => {
+  it('uses the media generation tab for image generation settings', () => {
     const html = renderToStaticMarkup(createElement(SettingsSidebar, {
-      category: 'imageGeneration',
+      category: 'mediaGeneration',
       goBack: () => undefined,
       setCategory: () => undefined,
       t
     }))
 
     const writeIndex = html.indexOf('Write')
+    const mediaIndex = html.indexOf('Media generation')
     const imageIndex = html.indexOf('Image generation')
     const agentsIndex = html.indexOf('AI assistant')
     expect(writeIndex).toBeGreaterThanOrEqual(0)
-    expect(imageIndex).toBeGreaterThan(writeIndex)
-    expect(agentsIndex).toBeGreaterThan(imageIndex)
+    expect(mediaIndex).toBeGreaterThan(writeIndex)
+    expect(imageIndex).toBe(-1)
+    expect(agentsIndex).toBeGreaterThan(mediaIndex)
   })
 })
