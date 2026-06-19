@@ -248,28 +248,23 @@ export async function runClawScheduleMcpServerFromArgv(argv: string[]): Promise<
   // /workflow/internal/* endpoints.
   if (options.workflowBaseUrl) {
     const wf = { baseUrl: options.workflowBaseUrl, secret: options.workflowSecret }
-    // Snapshot the callable workflows at startup so the agent SEES them in the
-    // run_workflow tool schema and reaches for them naturally — without having to
-    // call list_workflows first. (Authoritative list is still list_workflows.)
-    let catalog = ''
-    try {
-      const result = await postJson(wf, '/workflow/internal/list', {})
+    const RUN_WORKFLOW_BASE_DESC =
+      "Run one of the user's saved \"Create Loop\" workflows by name (or id) and wait for it to finish; returns its final output. When the user's request matches a saved workflow below, prefer running it over doing the steps manually."
+
+    const buildCatalog = (result: Record<string, unknown>): string => {
       const workflows = Array.isArray(result.workflows) ? result.workflows : []
-      if (workflows.length) {
-        catalog =
-          '\n\nWorkflows the user has saved (run by name; call list_workflows for the current list + inputs):\n' +
-          workflows
-            .map((item: { name?: unknown; description?: unknown }) => {
-              const name = typeof item.name === 'string' ? item.name : ''
-              const desc = typeof item.description === 'string' ? item.description : ''
-              return `- "${name}"${desc ? ` — ${desc}` : ''}`
-            })
-            .filter((line) => line !== '- ""')
-            .join('\n')
-      }
-    } catch {
-      /* ignore — list_workflows still works live */
+      const lines = workflows
+        .map((item: { name?: unknown; description?: unknown }) => {
+          const name = typeof item.name === 'string' ? item.name : ''
+          const desc = typeof item.description === 'string' ? item.description : ''
+          return name ? `- "${name}"${desc ? ` — ${desc}` : ''}` : ''
+        })
+        .filter((line) => line.length > 0)
+      return lines.length
+        ? `\n\nWorkflows the user has saved (run by name; call list_workflows for inputs):\n${lines.join('\n')}`
+        : ''
     }
+
     server.registerTool('list_workflows', {
       description:
         'List the GUI "Create Loop" workflows the user marked callable by the agent. Returns each workflow id, name, a short description, and its required inputs. Check this whenever a request might be satisfied by a saved workflow.'
@@ -288,10 +283,8 @@ export async function runClawScheduleMcpServerFromArgv(argv: string[]): Promise<
       }
     })
 
-    server.registerTool('run_workflow', {
-      description:
-        "Run one of the user's saved \"Create Loop\" workflows by name (or id) and wait for it to finish; returns its final output. When the user's request matches a saved workflow below, prefer running it over doing the steps manually." +
-        catalog,
+    const runWorkflowTool = server.registerTool('run_workflow', {
+      description: RUN_WORKFLOW_BASE_DESC,
       inputSchema: {
         workflow: z.string().min(1).describe('Workflow name or id from list_workflows'),
         input: z.string().optional().describe('Optional input passed to the trigger; available to nodes as {{text}}'),
@@ -315,6 +308,25 @@ export async function runClawScheduleMcpServerFromArgv(argv: string[]): Promise<
         return errorResult(`Failed to run workflow: ${error instanceof Error ? error.message : String(error)}`)
       }
     })
+
+    // Keep run_workflow's description (the workflow catalog the agent sees) fresh:
+    // without needing a kun restart: re-fetch on an interval and update the tool
+    // only when the list actually changes. update() emits tools/list_changed, so
+    // the agent re-reads the current catalog on its next turn.
+    let lastCatalog = ' '
+    const refreshCatalog = async (): Promise<void> => {
+      try {
+        const catalog = buildCatalog(await postJson(wf, '/workflow/internal/list', {}))
+        if (catalog === lastCatalog) return
+        lastCatalog = catalog
+        runWorkflowTool.update({ description: RUN_WORKFLOW_BASE_DESC + catalog })
+      } catch {
+        /* ignore — list_workflows still works live */
+      }
+    }
+    await refreshCatalog() // seed the catalog before connect so the first tools/list carries it
+    const catalogTimer = setInterval(() => void refreshCatalog(), 30_000)
+    catalogTimer.unref?.()
   }
 
   const transport = new StdioServerTransport()
