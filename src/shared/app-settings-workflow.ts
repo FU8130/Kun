@@ -7,6 +7,7 @@ import {
   type WorkflowCustomModuleV1,
   type WorkflowEnvVarV1,
   type WorkflowFieldV1,
+  type WorkflowClassifierCategoryV1,
   type WorkflowInputFieldType,
   type WorkflowInputFieldV1,
   type WorkflowManualTriggerConfigV1,
@@ -194,6 +195,16 @@ export function normalizeWorkflowInputSchema(value: unknown): WorkflowInputField
     })
     .filter((field) => field.key.length > 0)
     .slice(0, 50)
+}
+
+function normalizeClassifierCategories(value: unknown): WorkflowClassifierCategoryV1[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry, index): WorkflowClassifierCategoryV1 => {
+      const c = record(entry)
+      return { id: asTrimmed(c.id) || `cat-${index + 1}`, label: asTrimmed(c.label) }
+    })
+    .slice(0, 20)
 }
 
 function normalizeEnvVars(value: unknown): WorkflowEnvVarV1[] {
@@ -420,6 +431,32 @@ export function normalizeWorkflowNode(value: unknown, index: number): WorkflowNo
           mode: config.mode === 'text' || config.mode === 'json' ? config.mode : 'auto',
           textTemplate: asText(config.textTemplate),
           jsonPath: asTrimmed(config.jsonPath)
+        }
+      }
+    case 'parameter-extractor':
+      return {
+        ...base,
+        type: 'parameter-extractor',
+        config: {
+          source: asText(config.source),
+          instruction: asText(config.instruction),
+          fields: normalizeWorkflowInputSchema(config.fields),
+          providerId: asTrimmed(config.providerId),
+          model: asTrimmed(config.model),
+          reasoningEffort: normalizeScheduleReasoningEffort(config.reasoningEffort)
+        }
+      }
+    case 'question-classifier':
+      return {
+        ...base,
+        type: 'question-classifier',
+        config: {
+          source: asText(config.source),
+          instruction: asText(config.instruction),
+          categories: normalizeClassifierCategories(config.categories),
+          providerId: asTrimmed(config.providerId),
+          model: asTrimmed(config.model),
+          reasoningEffort: normalizeScheduleReasoningEffort(config.reasoningEffort)
         }
       }
     case 'custom':

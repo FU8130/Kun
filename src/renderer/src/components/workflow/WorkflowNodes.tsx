@@ -16,6 +16,7 @@ import {
   Globe,
   Hand,
   ImagePlus,
+  ListChecks,
   LogOut,
   Play,
   Power,
@@ -23,6 +24,7 @@ import {
   Scissors,
   Sigma,
   Split,
+  Tags,
   Timer,
   Trash2,
   Type,
@@ -71,6 +73,8 @@ export const NODE_ICONS: Record<WorkflowNodeKind, LucideIcon> = {
   template: Type,
   json: FileJson,
   output: LogOut,
+  'parameter-extractor': ListChecks,
+  'question-classifier': Tags,
   custom: Blocks
 }
 
@@ -137,6 +141,10 @@ function nodeSummary(node: WorkflowNodeV1): string {
       return node.config.mode === 'json' && node.config.jsonPath.trim()
         ? `json: ${node.config.jsonPath.trim()}`
         : node.config.mode
+    case 'parameter-extractor':
+      return `${node.config.fields.length} field(s)`
+    case 'question-classifier':
+      return `${node.config.categories.length} categories`
     default:
       return ''
   }
@@ -248,6 +256,23 @@ function WorkflowCanvasNode({ id, data, selected }: NodeProps): ReactElement {
           {node.config.fallback ? (
             <Handle type="source" position={Position.Right} id="fallback" style={{ top: '88%' }} />
           ) : null}
+        </>
+      ) : node.type === 'question-classifier' ? (
+        <>
+          {node.config.categories.map((category, index) => {
+            const top = ((index + 1) / (node.config.categories.length + 1)) * 100
+            return (
+              <div key={category.id}>
+                <Handle type="source" position={Position.Right} id={category.id} style={{ top: `${top}%` }} />
+                <div
+                  className="pointer-events-none absolute right-1 max-w-[60px] truncate text-[9px] font-medium text-ds-faint"
+                  style={{ top: `calc(${top}% - 7px)` }}
+                >
+                  {category.label || index + 1}
+                </div>
+              </div>
+            )
+          })}
         </>
       ) : node.type === 'output' ? null : (
         <Handle type="source" position={Position.Right} id="out" />

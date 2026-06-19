@@ -72,11 +72,20 @@ type Props = {
   workflowName?: string
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }): ReactElement {
+function Field({
+  label,
+  hint,
+  children
+}: {
+  label: string
+  hint?: string
+  children: ReactNode
+}): ReactElement {
   return (
     <label className="flex flex-col gap-1.5">
       <span className="text-[12px] font-medium text-ds-muted">{label}</span>
       {children}
+      {hint ? <span className="text-[11px] leading-4 text-ds-faint">{hint}</span> : null}
     </label>
   )
 }
@@ -152,6 +161,113 @@ function CustomNodeForm({
           </Field>
         )
       })}
+    </>
+  )
+}
+
+/** Reusable typed-field editor — shared by the manual trigger's input schema and the Parameter Extractor. */
+function InputFieldsEditor({
+  fields,
+  onChange
+}: {
+  fields: WorkflowInputFieldV1[]
+  onChange: (next: WorkflowInputFieldV1[]) => void
+}): ReactElement {
+  const { t } = useTranslation('common')
+  const addField = (): void =>
+    onChange([
+      ...fields,
+      { key: `field${fields.length + 1}`, label: '', type: 'text', required: false, options: [], defaultValue: '', description: '' }
+    ])
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] font-medium text-ds-muted">{t('workflowInputSchema')}</span>
+        <button
+          type="button"
+          onClick={addField}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-medium text-accent transition hover:bg-accent/10"
+        >
+          <Plus className="h-3 w-3" strokeWidth={2} />
+          {t('workflowInputAddField')}
+        </button>
+      </div>
+      {fields.length === 0 ? (
+        <p className="text-[11px] leading-4 text-ds-faint">{t('workflowInputSchemaHint')}</p>
+      ) : (
+        fields.map((field, index) => {
+          const update = (patch: Partial<WorkflowInputFieldV1>): void =>
+            onChange(fields.map((item, i) => (i === index ? { ...item, ...patch } : item)))
+          return (
+            <div key={index} className="flex flex-col gap-2 rounded-lg border border-ds-border p-2.5">
+              <div className="flex items-center gap-2">
+                <input
+                  className={INPUT_CLASS}
+                  value={field.key}
+                  placeholder={t('workflowInputKey')}
+                  onChange={(event) => update({ key: event.target.value })}
+                />
+                <select
+                  className={`${INPUT_CLASS} w-28 shrink-0`}
+                  value={field.type}
+                  onChange={(event) => update({ type: event.target.value as WorkflowInputFieldType })}
+                >
+                  {WORKFLOW_INPUT_FIELD_TYPES.map((fieldType) => (
+                    <option key={fieldType} value={fieldType}>
+                      {t(`workflowInputType_${fieldType}`)}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => onChange(fields.filter((_, i) => i !== index))}
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ds-faint transition hover:bg-red-500/10 hover:text-red-600"
+                  aria-label={t('workflowInputRemoveField')}
+                >
+                  <X className="h-3.5 w-3.5" strokeWidth={2} />
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  className={INPUT_CLASS}
+                  value={field.label}
+                  placeholder={t('workflowInputLabel')}
+                  onChange={(event) => update({ label: event.target.value })}
+                />
+                <input
+                  className={INPUT_CLASS}
+                  value={field.defaultValue}
+                  placeholder={t('workflowInputDefault')}
+                  onChange={(event) => update({ defaultValue: event.target.value })}
+                />
+              </div>
+              {field.type === 'select' ? (
+                <input
+                  className={INPUT_CLASS}
+                  value={field.options.join(', ')}
+                  placeholder={t('workflowModuleFieldOptions')}
+                  onChange={(event) =>
+                    update({
+                      options: event.target.value
+                        .split(',')
+                        .map((option) => option.trim())
+                        .filter((option) => option.length > 0)
+                    })
+                  }
+                />
+              ) : null}
+              <label className="flex items-center gap-2 text-[12px] text-ds-muted">
+                <input
+                  type="checkbox"
+                  checked={field.required}
+                  onChange={(event) => update({ required: event.target.checked })}
+                />
+                {t('workflowInputRequired')}
+              </label>
+            </div>
+          )
+        })
+      )}
     </>
   )
 }
@@ -249,117 +365,14 @@ export function NodeConfigPanel({
           </Field>
         ) : null}
 
-        {node.type === 'manual-trigger'
-          ? (() => {
-              const schema = node.config.inputSchema ?? []
-              const setSchema = (next: WorkflowInputFieldV1[]): void =>
-                onChange({ ...node, config: { ...node.config, inputSchema: next } })
-              return (
-                <div className="flex flex-col gap-2 border-t border-ds-border pt-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[12px] font-medium text-ds-muted">{t('workflowInputSchema')}</span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSchema([
-                          ...schema,
-                          {
-                            key: `field${schema.length + 1}`,
-                            label: '',
-                            type: 'text',
-                            required: false,
-                            options: [],
-                            defaultValue: '',
-                            description: ''
-                          }
-                        ])
-                      }
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-medium text-accent transition hover:bg-accent/10"
-                    >
-                      <Plus className="h-3 w-3" strokeWidth={2} />
-                      {t('workflowInputAddField')}
-                    </button>
-                  </div>
-                  {schema.length === 0 ? (
-                    <p className="text-[11px] leading-4 text-ds-faint">{t('workflowInputSchemaHint')}</p>
-                  ) : (
-                    schema.map((field, index) => {
-                      const update = (patch: Partial<WorkflowInputFieldV1>): void =>
-                        setSchema(schema.map((item, i) => (i === index ? { ...item, ...patch } : item)))
-                      return (
-                        <div key={index} className="flex flex-col gap-2 rounded-lg border border-ds-border p-2.5">
-                          <div className="flex items-center gap-2">
-                            <input
-                              className={INPUT_CLASS}
-                              value={field.key}
-                              placeholder={t('workflowInputKey')}
-                              onChange={(event) => update({ key: event.target.value })}
-                            />
-                            <select
-                              className={`${INPUT_CLASS} w-28 shrink-0`}
-                              value={field.type}
-                              onChange={(event) => update({ type: event.target.value as WorkflowInputFieldType })}
-                            >
-                              {WORKFLOW_INPUT_FIELD_TYPES.map((fieldType) => (
-                                <option key={fieldType} value={fieldType}>
-                                  {t(`workflowInputType_${fieldType}`)}
-                                </option>
-                              ))}
-                            </select>
-                            <button
-                              type="button"
-                              onClick={() => setSchema(schema.filter((_, i) => i !== index))}
-                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ds-faint transition hover:bg-red-500/10 hover:text-red-600"
-                              aria-label={t('workflowInputRemoveField')}
-                            >
-                              <X className="h-3.5 w-3.5" strokeWidth={2} />
-                            </button>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <input
-                              className={INPUT_CLASS}
-                              value={field.label}
-                              placeholder={t('workflowInputLabel')}
-                              onChange={(event) => update({ label: event.target.value })}
-                            />
-                            <input
-                              className={INPUT_CLASS}
-                              value={field.defaultValue}
-                              placeholder={t('workflowInputDefault')}
-                              onChange={(event) => update({ defaultValue: event.target.value })}
-                            />
-                          </div>
-                          {field.type === 'select' ? (
-                            <input
-                              className={INPUT_CLASS}
-                              value={field.options.join(', ')}
-                              placeholder={t('workflowModuleFieldOptions')}
-                              onChange={(event) =>
-                                update({
-                                  options: event.target.value
-                                    .split(',')
-                                    .map((option) => option.trim())
-                                    .filter((option) => option.length > 0)
-                                })
-                              }
-                            />
-                          ) : null}
-                          <label className="flex items-center gap-2 text-[12px] text-ds-muted">
-                            <input
-                              type="checkbox"
-                              checked={field.required}
-                              onChange={(event) => update({ required: event.target.checked })}
-                            />
-                            {t('workflowInputRequired')}
-                          </label>
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-              )
-            })()
-          : null}
+        {node.type === 'manual-trigger' ? (
+          <div className="flex flex-col gap-2 border-t border-ds-border pt-3">
+            <InputFieldsEditor
+              fields={node.config.inputSchema ?? []}
+              onChange={(next) => onChange({ ...node, config: { ...node.config, inputSchema: next } })}
+            />
+          </div>
+        ) : null}
 
         {node.type === 'manual-trigger' && workflowName ? (
           <div className="flex flex-col gap-1.5 border-t border-ds-border pt-3">
@@ -1324,6 +1337,150 @@ export function NodeConfigPanel({
                 />
               </Field>
             ) : null}
+          </>
+        ) : null}
+
+        {node.type === 'parameter-extractor' ? (
+          <>
+            <Field label={t('workflowExtractSource')} hint={t('workflowExtractSourceHint')}>
+              <input
+                className={INPUT_CLASS}
+                value={node.config.source}
+                placeholder="{{text}}"
+                onChange={(event) => onChange({ ...node, config: { ...node.config, source: event.target.value } })}
+              />
+            </Field>
+            <Field label={t('workflowExtractInstruction')}>
+              <textarea
+                className={`${INPUT_CLASS} min-h-[72px] resize-y`}
+                value={node.config.instruction}
+                placeholder={t('workflowExtractInstructionPlaceholder')}
+                onChange={(event) =>
+                  onChange({ ...node, config: { ...node.config, instruction: event.target.value } })
+                }
+              />
+            </Field>
+            <div className="flex flex-col gap-2 border-t border-ds-border pt-3">
+              <InputFieldsEditor
+                fields={node.config.fields}
+                onChange={(next) => onChange({ ...node, config: { ...node.config, fields: next } })}
+              />
+            </div>
+            <ModelPicker
+              providers={providers}
+              providerId={node.config.providerId}
+              model={node.config.model}
+              onChange={({ providerId, model }) => onChange({ ...node, config: { ...node.config, providerId, model } })}
+            />
+            <Field label={t('scheduleReasoning')}>
+              <select
+                className={INPUT_CLASS}
+                value={node.config.reasoningEffort}
+                onChange={(event) =>
+                  onChange({
+                    ...node,
+                    config: { ...node.config, reasoningEffort: event.target.value as typeof node.config.reasoningEffort }
+                  })
+                }
+              >
+                {SCHEDULE_REASONING_EFFORT_IDS.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {t(`scheduleReasoning_${effort}`)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </>
+        ) : null}
+
+        {node.type === 'question-classifier' ? (
+          <>
+            <Field label={t('workflowExtractSource')} hint={t('workflowClassifySourceHint')}>
+              <input
+                className={INPUT_CLASS}
+                value={node.config.source}
+                placeholder="{{text}}"
+                onChange={(event) => onChange({ ...node, config: { ...node.config, source: event.target.value } })}
+              />
+            </Field>
+            <Field label={t('workflowExtractInstruction')}>
+              <textarea
+                className={`${INPUT_CLASS} min-h-[60px] resize-y`}
+                value={node.config.instruction}
+                placeholder={t('workflowClassifyInstructionPlaceholder')}
+                onChange={(event) =>
+                  onChange({ ...node, config: { ...node.config, instruction: event.target.value } })
+                }
+              />
+            </Field>
+            <div className="flex flex-col gap-2 border-t border-ds-border pt-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-medium text-ds-muted">{t('workflowClassifyCategories')}</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChange({
+                      ...node,
+                      config: {
+                        ...node.config,
+                        categories: [
+                          ...node.config.categories,
+                          { id: `cat-${node.config.categories.length + 1}-${Date.now().toString(36)}`, label: '' }
+                        ]
+                      }
+                    })
+                  }
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-medium text-accent transition hover:bg-accent/10"
+                >
+                  <Plus className="h-3 w-3" strokeWidth={2} />
+                  {t('workflowClassifyAddCategory')}
+                </button>
+              </div>
+              {node.config.categories.map((category, index) => (
+                <div key={category.id} className="flex items-center gap-2">
+                  <span className="w-5 shrink-0 text-center text-[11px] text-ds-faint">{index + 1}</span>
+                  <input
+                    className={INPUT_CLASS}
+                    value={category.label}
+                    placeholder={t('workflowClassifyCategoryLabel')}
+                    onChange={(event) =>
+                      onChange({
+                        ...node,
+                        config: {
+                          ...node.config,
+                          categories: node.config.categories.map((item, i) =>
+                            i === index ? { ...item, label: event.target.value } : item
+                          )
+                        }
+                      })
+                    }
+                  />
+                  <button
+                    type="button"
+                    disabled={node.config.categories.length <= 1}
+                    onClick={() =>
+                      onChange({
+                        ...node,
+                        config: {
+                          ...node.config,
+                          categories: node.config.categories.filter((_, i) => i !== index)
+                        }
+                      })
+                    }
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ds-faint transition hover:bg-red-500/10 hover:text-red-600 disabled:opacity-40"
+                    aria-label={t('workflowClassifyRemoveCategory')}
+                  >
+                    <X className="h-3.5 w-3.5" strokeWidth={2} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <ModelPicker
+              providers={providers}
+              providerId={node.config.providerId}
+              model={node.config.model}
+              onChange={({ providerId, model }) => onChange({ ...node, config: { ...node.config, providerId, model } })}
+            />
           </>
         ) : null}
 

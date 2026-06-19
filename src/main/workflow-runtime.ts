@@ -667,6 +667,27 @@ function missingRequiredInput(schema: WorkflowInputFieldV1[] | undefined, input:
   return null
 }
 
+/** Parse a JSON object out of an LLM reply, tolerating ```json fences and surrounding prose. */
+function extractJsonObject(raw: string): Record<string, unknown> | null {
+  const text = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim()
+  const tryParse = (candidate: string): Record<string, unknown> | null => {
+    try {
+      const parsed = JSON.parse(candidate)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null
+    } catch {
+      return null
+    }
+  }
+  const direct = tryParse(text)
+  if (direct) return direct
+  const match = text.match(/\{[\s\S]*\}/)
+  return match ? tryParse(match[0]) : null
+}
+
 /** Coerce a workflow's env vars into a {{$env.key}} lookup (secrets are plain values here). */
 function resolveEnv(env: WorkflowEnvVarV1[]): Record<string, unknown> {
   const out: Record<string, unknown> = {}
@@ -1725,6 +1746,75 @@ export class WorkflowRuntime {
           return { payload: { json: value, text: safeJson(value) }, message: 'output' }
         }
         return { payload, message: 'output' }
+      }
+      case 'parameter-extractor': {
+        const modelConfig = resolveScheduleModelConfig(
+          settings,
+          { providerId: node.config.providerId, model: node.config.model, reasoningEffort: node.config.reasoningEffort },
+          settings.workflow.providerId?.trim() || ''
+        )
+        const workspace =
+          runWorkspace || settings.workflow.defaultWorkspaceRoot.trim() || settings.workspaceRoot
+        const sourceText = node.config.source.trim() ? interpolate(node.config.source, payload, scope) : payload.text
+        const fieldList = node.config.fields
+          .map(
+            (field) =>
+              `- ${field.key}${field.required ? ' (required)' : ''}: ${field.type}` +
+              `${field.description ? ` — ${field.description}` : ''}` +
+              `${field.type === 'select' && field.options.length ? ` (one of: ${field.options.join(', ')})` : ''}`
+          )
+          .join('\n')
+        const prompt =
+          `${node.config.instruction ? `${node.config.instruction}\n\n` : ''}` +
+          `Extract these fields from the text and reply with ONLY a JSON object using exactly these keys (no markdown, no prose):\n${fieldList}\n\nText:\n${sourceText}`
+        const result = await runPromptViaRuntime(this.deps, settings, {
+          prompt,
+          title: `[Workflow] ${node.name || 'Extract'}`.trim(),
+          workspaceRoot: workspace,
+          model: modelConfig.model,
+          reasoningEffort: modelConfig.reasoningEffort,
+          mode: 'agent',
+          waitForResult: true,
+          responseTimeoutMs: AI_NODE_RESPONSE_TIMEOUT_MS
+        })
+        if (!result.ok) throw new Error(result.message)
+        const parsed = extractJsonObject(result.text ?? '')
+        const json: Record<string, unknown> = {}
+        for (const field of node.config.fields) {
+          json[field.key] = coerceInputFieldValue(field, parsed?.[field.key])
+        }
+        return { payload: { json, text: safeJson(json) }, message: 'extracted', threadId: result.threadId }
+      }
+      case 'question-classifier': {
+        const categories = node.config.categories
+        if (categories.length === 0) return { payload, message: 'no categories' }
+        const modelConfig = resolveScheduleModelConfig(
+          settings,
+          { providerId: node.config.providerId, model: node.config.model, reasoningEffort: node.config.reasoningEffort },
+          settings.workflow.providerId?.trim() || ''
+        )
+        const workspace =
+          runWorkspace || settings.workflow.defaultWorkspaceRoot.trim() || settings.workspaceRoot
+        const sourceText = node.config.source.trim() ? interpolate(node.config.source, payload, scope) : payload.text
+        const list = categories.map((category, index) => `${index + 1}. ${category.label}`).join('\n')
+        const prompt =
+          `${node.config.instruction ? `${node.config.instruction}\n\n` : ''}` +
+          `Classify the text into exactly one of these categories. Reply with ONLY the category number (1-${categories.length}):\n${list}\n\nText:\n${sourceText}`
+        const result = await runPromptViaRuntime(this.deps, settings, {
+          prompt,
+          title: `[Workflow] ${node.name || 'Classify'}`.trim(),
+          workspaceRoot: workspace,
+          model: modelConfig.model,
+          reasoningEffort: modelConfig.reasoningEffort,
+          mode: 'agent',
+          waitForResult: true,
+          responseTimeoutMs: AI_NODE_RESPONSE_TIMEOUT_MS
+        })
+        if (!result.ok) throw new Error(result.message)
+        const num = Number.parseInt((result.text ?? '').match(/\d+/)?.[0] ?? '', 10)
+        const index = Number.isFinite(num) && num >= 1 && num <= categories.length ? num - 1 : 0
+        const chosen = categories[index]
+        return { payload, message: `→ ${chosen.label}`, branch: chosen.id, threadId: result.threadId }
       }
       case 'custom': {
         const module = settings.workflow.modules.find((item) => item.id === node.config.moduleId)

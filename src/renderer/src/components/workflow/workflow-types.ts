@@ -31,7 +31,9 @@ export const WORKFLOW_PALETTE: readonly WorkflowNodeKind[] = [
   'delay',
   'template',
   'json',
-  'output'
+  'output',
+  'parameter-extractor',
+  'question-classifier'
 ]
 
 export const TRIGGER_KINDS: ReadonlySet<WorkflowNodeKind> = new Set([
@@ -44,8 +46,8 @@ export const TRIGGER_KINDS: ReadonlySet<WorkflowNodeKind> = new Set([
 export type WorkflowPaletteGroup = { id: string; kinds: readonly WorkflowNodeKind[] }
 export const WORKFLOW_PALETTE_GROUPS: readonly WorkflowPaletteGroup[] = [
   { id: 'trigger', kinds: ['manual-trigger', 'schedule-trigger', 'webhook-trigger'] },
-  { id: 'ai', kinds: ['ai-agent', 'generate-image'] },
-  { id: 'flow', kinds: ['condition', 'switch', 'filter', 'merge', 'loop'] },
+  { id: 'ai', kinds: ['ai-agent', 'generate-image', 'parameter-extractor'] },
+  { id: 'flow', kinds: ['condition', 'switch', 'question-classifier', 'filter', 'merge', 'loop'] },
   { id: 'data', kinds: ['set-fields', 'template', 'json', 'code', 'sort', 'limit', 'aggregate'] },
   { id: 'action', kinds: ['http-request', 'subworkflow', 'delay', 'output'] }
 ]
@@ -156,6 +158,25 @@ export function createWorkflowNode(
       return { ...base, type: 'json', config: { mode: 'parse', strict: false } }
     case 'output':
       return { ...base, type: 'output', config: { mode: 'auto', textTemplate: '', jsonPath: '' } }
+    case 'parameter-extractor':
+      return {
+        ...base,
+        type: 'parameter-extractor',
+        config: { source: '', instruction: '', fields: [], providerId: '', model: '', reasoningEffort: 'medium' }
+      }
+    case 'question-classifier':
+      return {
+        ...base,
+        type: 'question-classifier',
+        config: {
+          source: '',
+          instruction: '',
+          categories: [{ id: 'cat-1', label: '' }],
+          providerId: '',
+          model: '',
+          reasoningEffort: 'medium'
+        }
+      }
     case 'custom':
       return { ...base, type: 'custom', config: { moduleId: '', values: {} } }
     default:

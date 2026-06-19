@@ -559,6 +559,8 @@ export type WorkflowNodeKind =
   | 'template'
   | 'json'
   | 'output'
+  | 'parameter-extractor'
+  | 'question-classifier'
   | 'custom'
 
 export const WORKFLOW_NODE_KINDS: readonly WorkflowNodeKind[] = [
@@ -583,6 +585,8 @@ export const WORKFLOW_NODE_KINDS: readonly WorkflowNodeKind[] = [
   'template',
   'json',
   'output',
+  'parameter-extractor',
+  'question-classifier',
   'custom'
 ]
 
@@ -803,6 +807,31 @@ export type WorkflowCustomConfigV1 = {
   values: Record<string, string>
 }
 
+/** dify-style Parameter Extractor: an LLM turns free text into typed JSON fields. */
+export type WorkflowParameterExtractorConfigV1 = {
+  /** Expression for the source text (default {{text}}). */
+  source: string
+  instruction: string
+  /** Fields to extract (reuses the typed input-field schema). */
+  fields: WorkflowInputFieldV1[]
+  providerId: string
+  model: string
+  reasoningEffort: ScheduleReasoningEffort
+}
+
+export type WorkflowClassifierCategoryV1 = { id: string; label: string }
+
+/** dify-style Question Classifier: an LLM routes the input to one of N categories. */
+export type WorkflowQuestionClassifierConfigV1 = {
+  /** Expression for the text to classify (default {{text}}). */
+  source: string
+  instruction: string
+  categories: WorkflowClassifierCategoryV1[]
+  providerId: string
+  model: string
+  reasoningEffort: ScheduleReasoningEffort
+}
+
 export const WORKFLOW_MODULE_FIELD_TYPES = ['text', 'textarea', 'number', 'boolean', 'select'] as const
 export type WorkflowModuleFieldType = (typeof WORKFLOW_MODULE_FIELD_TYPES)[number]
 
@@ -907,6 +936,8 @@ export type WorkflowNodeConfigByKind = {
   template: WorkflowTemplateConfigV1
   json: WorkflowJsonConfigV1
   output: WorkflowOutputConfigV1
+  'parameter-extractor': WorkflowParameterExtractorConfigV1
+  'question-classifier': WorkflowQuestionClassifierConfigV1
   custom: WorkflowCustomConfigV1
 }
 

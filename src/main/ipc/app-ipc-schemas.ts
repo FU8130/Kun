@@ -917,6 +917,31 @@ const workflowInputFieldSchema = z
   })
   .strict()
 
+const workflowParameterExtractorConfigSchema = z
+  .object({
+    source: z.string().max(MAX_BODY_BYTES).optional(),
+    instruction: z.string().max(MAX_BODY_BYTES).optional(),
+    fields: z.array(workflowInputFieldSchema).max(50).optional(),
+    providerId: z.string().trim().max(64).optional(),
+    model: optionalTrimmedString(128),
+    reasoningEffort: scheduleReasoningEffortSchema.optional()
+  })
+  .strict()
+
+const workflowQuestionClassifierConfigSchema = z
+  .object({
+    source: z.string().max(MAX_BODY_BYTES).optional(),
+    instruction: z.string().max(MAX_BODY_BYTES).optional(),
+    categories: z
+      .array(z.object({ id: z.string().max(64).optional(), label: z.string().max(200).optional() }).strict())
+      .max(20)
+      .optional(),
+    providerId: z.string().trim().max(64).optional(),
+    model: optionalTrimmedString(128),
+    reasoningEffort: scheduleReasoningEffortSchema.optional()
+  })
+  .strict()
+
 const workflowNodePatchSchema = z.discriminatedUnion('type', [
   z
     .object({
@@ -966,6 +991,8 @@ const workflowNodePatchSchema = z.discriminatedUnion('type', [
   z.object({ ...workflowNodeBaseShape, type: z.literal('template'), config: workflowTemplateConfigSchema.optional() }).strict(),
   z.object({ ...workflowNodeBaseShape, type: z.literal('json'), config: workflowJsonConfigSchema.optional() }).strict(),
   z.object({ ...workflowNodeBaseShape, type: z.literal('output'), config: workflowOutputConfigSchema.optional() }).strict(),
+  z.object({ ...workflowNodeBaseShape, type: z.literal('parameter-extractor'), config: workflowParameterExtractorConfigSchema.optional() }).strict(),
+  z.object({ ...workflowNodeBaseShape, type: z.literal('question-classifier'), config: workflowQuestionClassifierConfigSchema.optional() }).strict(),
   z.object({ ...workflowNodeBaseShape, type: z.literal('custom'), config: workflowCustomConfigSchema.optional() }).strict()
 ])
 
