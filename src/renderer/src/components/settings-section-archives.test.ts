@@ -114,4 +114,19 @@ describe('ArchivedThreadsSettingsSection', () => {
     expect(archivesIndex).toBeGreaterThan(agentsIndex)
     expect(permissionsIndex).toBeGreaterThan(archivesIndex)
   })
+
+  it('keeps settings tabs scrollable without pushing the footer away', () => {
+    const html = renderToStaticMarkup(createElement(SettingsSidebar, {
+      category: 'shortcuts',
+      goBack: () => undefined,
+      setCategory: () => undefined,
+      t
+    }))
+
+    expect(html).toContain('flex h-full min-h-0 w-[248px]')
+    expect(html).toContain('flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain')
+    expect(html).toContain('ds-no-drag shrink-0 border-t border-ds-border p-3')
+    expect(html).toContain('Kun')
+    expect(html).toContain('Settings')
+  })
 })
