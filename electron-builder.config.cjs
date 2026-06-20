@@ -175,6 +175,7 @@ module.exports = {
     perMachine: false,
     allowElevation: true,
     selectPerMachineByDefault: false,
+    include: 'build/installer.nsh',
     // 明确创建快捷方式；always 在覆盖安装时也会重建（即使用户曾删掉桌面图标）
     createDesktopShortcut: 'always',
     createStartMenuShortcut: true,
