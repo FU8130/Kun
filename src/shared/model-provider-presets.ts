@@ -28,6 +28,7 @@ export type ModelProviderPresetId =
   | 'minimax'
   | 'aliyun'
   | 'tencentcloud'
+  | 'vercel-ai-gateway'
 
 export const TOKEN_PLAN_PROVIDER_ID_SUFFIX = '-token-plan'
 
@@ -597,6 +598,15 @@ export const MODEL_PROVIDER_PRESETS: ModelProviderPreset[] = [
     },
     docsUrl: 'https://cloud.tencent.com/document/product/1729/111006',
     apiKeyUrl: 'https://console.cloud.tencent.com/hunyuan/start'
+  },
+  {
+    id: 'vercel-ai-gateway',
+    name: 'Vercel AI Gateway',
+    baseUrl: 'https://ai-gateway.vercel.sh/v1',
+    endpointFormat: 'chat_completions',
+    models: [],
+    docsUrl: 'https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions',
+    apiKeyUrl: 'https://vercel.com/ai-gateway'
   }
 ]
 

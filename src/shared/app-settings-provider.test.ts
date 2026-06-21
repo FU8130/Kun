@@ -943,8 +943,10 @@ describe('model provider settings', () => {
 })
 
 describe('provider presets', () => {
-  it('includes a LiteLLM preset', () => {
+  it('includes optional LiteLLM and Vercel AI Gateway presets', () => {
     const litellm = getModelProviderPreset('litellm')
+    const vercel = getModelProviderPreset('vercel-ai-gateway')
+
     expect(litellm).not.toBeNull()
     expect(litellm && modelProviderPresetProfile(litellm)).toMatchObject({
       id: 'litellm',
@@ -953,6 +955,18 @@ describe('provider presets', () => {
       endpointFormat: 'chat_completions',
       models: []
     })
+
+    expect(vercel).not.toBeNull()
+    expect(vercel && modelProviderPresetProfile(vercel)).toMatchObject({
+      id: 'vercel-ai-gateway',
+      name: 'Vercel AI Gateway',
+      baseUrl: 'https://ai-gateway.vercel.sh/v1',
+      endpointFormat: 'chat_completions',
+      models: []
+    })
+    expect(vercel?.docsUrl).toBe(
+      'https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions'
+    )
   })
 
   it('includes Zhipu, Z.ai, Kimi Code, and Moonshot presets', () => {
