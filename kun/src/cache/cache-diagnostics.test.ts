@@ -67,4 +67,32 @@ describe('cache diagnostics', () => {
     expect(result.totalInputTokenHitRate).toBeNull()
     expect(result.reasons).toContain('provider_metrics_unavailable')
   })
+
+  it('treats hit-only telemetry as unavailable rather than perfect coverage', () => {
+    const result = diagnoseCacheUsage({
+      // Provider reported hits but no miss counter — partial telemetry.
+      usage: { promptTokens: 1_000, cacheHitTokens: 600 },
+      previous: stable,
+      current: stable
+    })
+    // Must not fabricate a 1.0 "perfect" rate from the incomplete denominator.
+    expect(result.cacheableTokenHitRate).toBeNull()
+    expect(result.totalInputTokenHitRate).toBeNull()
+    expect(result.reasons).toContain('provider_metrics_unavailable')
+    // The clean-miss branch must not run on partial telemetry.
+    expect(result.reasons).not.toContain('provider_cache_miss')
+  })
+
+  it('treats miss-only telemetry as unavailable rather than verified', () => {
+    const result = diagnoseCacheUsage({
+      // Provider reported misses but no hit counter — partial telemetry.
+      usage: { promptTokens: 1_000, cacheMissTokens: 400 },
+      previous: stable,
+      current: stable
+    })
+    expect(result.cacheableTokenHitRate).toBeNull()
+    expect(result.totalInputTokenHitRate).toBeNull()
+    expect(result.reasons).toContain('provider_metrics_unavailable')
+    expect(result.reasons).not.toContain('provider_cache_miss')
+  })
 })

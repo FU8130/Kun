@@ -35,7 +35,11 @@ export function diagnoseCacheUsage(input: {
 }): CacheDiagnostic {
   const hitTokens = input.usage.cacheHitTokens
   const missTokens = input.usage.cacheMissTokens
-  const hasProviderMetrics = hitTokens !== undefined || missTokens !== undefined
+  // Require BOTH hit and miss counters before trusting provider telemetry.
+  // A provider that reports only hits (miss undefined) — or only misses —
+  // gives partial data; treating that as complete would mask the miss-reason
+  // branch and falsely report perfect cache coverage.
+  const hasProviderMetrics = hitTokens !== undefined && missTokens !== undefined
   const cacheableTokens = (hitTokens ?? 0) + (missTokens ?? 0)
   const reasons: CacheMissReason[] = []
   const suggestions: string[] = []
@@ -74,9 +78,13 @@ export function diagnoseCacheUsage(input: {
   }
 
   return {
-    cacheableTokenHitRate: cacheableTokens > 0 ? (hitTokens ?? 0) / cacheableTokens : null,
+    // Only report a cacheable hit rate when both hit and miss counters are
+    // present; partial telemetry (e.g. hits only) would otherwise compute a
+    // misleading 1.0 "perfect" rate from an incomplete denominator.
+    cacheableTokenHitRate:
+      hasProviderMetrics && cacheableTokens > 0 ? (hitTokens ?? 0) / cacheableTokens : null,
     totalInputTokenHitRate:
-      input.usage.promptTokens > 0 && hitTokens !== undefined
+      hasProviderMetrics && input.usage.promptTokens > 0 && hitTokens !== undefined
         ? hitTokens / input.usage.promptTokens
         : null,
     reasons: [...new Set(reasons)],
