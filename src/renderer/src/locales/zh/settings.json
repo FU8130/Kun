@@ -1103,6 +1103,8 @@
   "memoryCreateTitle": "新建记忆",
   "memoryEditTitle": "编辑记忆",
   "memoryEdit": "编辑",
+  "memoryDetails": "详情",
+  "memoryClose": "关闭",
   "memoryDisable": "禁用",
   "memoryDelete": "删除",
   "memoryDisabled": "已禁用",
@@ -1112,6 +1114,7 @@
   "memoryContentPlaceholder": "想让助手记住什么?例如:「偏好 TypeScript,2 空格缩进」",
   "memoryTagsPlaceholder": "标签,逗号分隔",
   "memoryConfidence": "置信度",
+  "memoryProject": "所属项目",
   "memoryScope_all": "全部",
   "memoryScope_user": "用户",
   "memoryScope_workspace": "工作区",
@@ -1120,5 +1123,9 @@
   "memoryLastInjectedDesc": "最近一轮对话中注入的记忆记录 ID。",
   "memoryDisabledHint": "记忆功能当前已关闭。需要在运行时配置(kun config)中启用后才能创建和使用记忆记录。",
   "memoryEnable": "启用记忆",
-  "memoryEnableDesc": "启用后,助手会跨会话保存事实和偏好,并自动注入到上下文中。修改后会在下一轮对话生效。"
+  "memoryEnableDesc": "启用后,助手会跨会话保存事实和偏好,并自动注入到上下文中。修改后会在下一轮对话生效。",
+  "memoryDiscardConfirm": "放弃未保存的更改？",
+  "memoryDiscardConfirmDetail": "您的修改将会丢失。",
+  "memoryDiscardConfirmAction": "放弃",
+  "memoryDiscardCancel": "继续编辑"
 }

@@ -1103,6 +1103,8 @@
   "memoryCreateTitle": "Create memory",
   "memoryEditTitle": "Edit memory",
   "memoryEdit": "Edit",
+  "memoryDetails": "Details",
+  "memoryClose": "Close",
   "memoryDisable": "Disable",
   "memoryDelete": "Delete",
   "memoryDisabled": "disabled",
@@ -1112,6 +1114,7 @@
   "memoryContentPlaceholder": "What should the assistant remember? e.g. \"Prefer TypeScript with 2-space indentation.\"",
   "memoryTagsPlaceholder": "Tags, comma-separated",
   "memoryConfidence": "Confidence",
+  "memoryProject": "Project",
   "memoryScope_all": "All",
   "memoryScope_user": "User",
   "memoryScope_workspace": "Workspace",
@@ -1120,5 +1123,9 @@
   "memoryLastInjectedDesc": "Memory record IDs that were injected into the most recent turn.",
   "memoryDisabledHint": "Memory is currently disabled. Enable it in the runtime configuration (kun config) to create and use memory records.",
   "memoryEnable": "Enable memory",
-  "memoryEnableDesc": "When enabled, the assistant persists facts and preferences across sessions and injects them into context automatically. Changes apply on the next turn."
+  "memoryEnableDesc": "When enabled, the assistant persists facts and preferences across sessions and injects them into context automatically. Changes apply on the next turn.",
+  "memoryDiscardConfirm": "Discard unsaved changes?",
+  "memoryDiscardConfirmDetail": "Your edits will be lost.",
+  "memoryDiscardConfirmAction": "Discard",
+  "memoryDiscardCancel": "Keep editing"
 }
