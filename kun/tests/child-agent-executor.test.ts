@@ -166,4 +166,65 @@ describe('child agent executor', () => {
 
     expect(seen[0]?.providerId).toBe('minimax')
   })
+
+  it('honors an explicit allowedTools list over the tool policy', async () => {
+    const seen: ModelRequest[] = []
+    const registry = new CapabilityRegistry([{
+      id: 'builtin',
+      kind: 'built-in',
+      enabled: true,
+      available: true,
+      tools: buildDefaultLocalTools()
+    }])
+    const executor = createChildAgentExecutor({
+      model: model([
+        { kind: 'assistant_text_delta', text: 'done' },
+        { kind: 'completed', stopReason: 'stop' }
+      ], seen),
+      toolHost: new LocalToolHost({ registry }),
+      prefix: createImmutablePrefix({ systemPrompt: 'child system' }),
+      defaultModel: 'child-test',
+      nowIso: () => '2026-06-03T00:00:00.000Z'
+    })
+
+    await executor({
+      childId: 'child_tools',
+      parentThreadId: 'thr_parent',
+      parentTurnId: 'turn_parent',
+      prompt: 'Investigate',
+      // readOnly would allow read/grep/find/ls; the explicit list narrows it.
+      toolPolicy: 'readOnly',
+      allowedTools: ['read', 'grep'],
+      signal: new AbortController().signal
+    })
+
+    const toolNames = (seen[0]?.tools ?? []).map((tool) => tool.name).sort()
+    expect(toolNames).toEqual(['grep', 'read'])
+  })
+
+  it('augments the base system prompt with the agent systemPrompt', async () => {
+    const seen: ModelRequest[] = []
+    const executor = createChildAgentExecutor({
+      model: model([
+        { kind: 'assistant_text_delta', text: 'ok' },
+        { kind: 'completed', stopReason: 'stop' }
+      ], seen),
+      toolHost: new LocalToolHost({ registry: new CapabilityRegistry([]) }),
+      prefix: createImmutablePrefix({ systemPrompt: 'BASE PROMPT' }),
+      defaultModel: 'child-test',
+      nowIso: () => '2026-06-03T00:00:00.000Z'
+    })
+
+    await executor({
+      childId: 'child_sys',
+      parentThreadId: 'thr_parent',
+      parentTurnId: 'turn_parent',
+      prompt: 'Task',
+      systemPrompt: 'You are a careful reviewer.',
+      toolPolicy: 'inherit',
+      signal: new AbortController().signal
+    })
+
+    expect(seen[0]?.systemPrompt).toBe('BASE PROMPT\n\nYou are a careful reviewer.')
+  })
 })

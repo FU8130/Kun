@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
-import { SubagentToolPolicy, type SubagentsCapabilityConfig } from '../contracts/capabilities.js'
+import { SubagentToolPolicy, type SubagentMode, type SubagentsCapabilityConfig } from '../contracts/capabilities.js'
 import type { RuntimeEventRecorder } from '../services/runtime-event-recorder.js'
 import type { UsageSnapshot } from '../contracts/usage.js'
 
@@ -67,6 +67,8 @@ export type ChildRunExecutor = (input: {
   workspace?: string
   model?: string
   providerId?: string
+  systemPrompt?: string
+  allowedTools?: string[]
   toolPolicy: SubagentToolPolicy
   promptPreamble?: string
   signal: AbortSignal
@@ -170,6 +172,8 @@ export class DelegationRuntime {
     const toolPolicy = profile?.toolPolicy ?? config.defaultToolPolicy
     const resolvedModel = input.model?.trim() || profile?.model
     const resolvedProviderId = input.providerId?.trim() || profile?.providerId
+    const resolvedSystemPrompt = profile?.systemPrompt
+    const resolvedAllowedTools = profile?.allowedTools
     const promptPreamble = profile?.promptPreamble
 
     // Reserve against the per-thread budget before persisting anything.
@@ -229,6 +233,8 @@ export class DelegationRuntime {
         workspace: input.workspace,
         model: resolvedModel,
         ...(resolvedProviderId ? { providerId: resolvedProviderId } : {}),
+        ...(resolvedSystemPrompt ? { systemPrompt: resolvedSystemPrompt } : {}),
+        ...(resolvedAllowedTools ? { allowedTools: resolvedAllowedTools } : {}),
         toolPolicy,
         ...(promptPreamble ? { promptPreamble } : {}),
         signal: input.signal
@@ -331,12 +337,14 @@ export class DelegationRuntime {
   }
 
   /** Configured profiles, surfaced to the delegate_task tool schema/UI. */
-  listProfiles(): { name: string; toolPolicy: SubagentToolPolicy; model?: string; providerId?: string }[] {
+  listProfiles(): { name: string; mode: SubagentMode; toolPolicy: SubagentToolPolicy; model?: string; providerId?: string; description?: string }[] {
     return Object.entries(this.options.config.profiles).map(([name, profile]) => ({
       name,
+      mode: profile.mode,
       toolPolicy: profile.toolPolicy,
       ...(profile.model ? { model: profile.model } : {}),
-      ...(profile.providerId ? { providerId: profile.providerId } : {})
+      ...(profile.providerId ? { providerId: profile.providerId } : {}),
+      ...(profile.description ? { description: profile.description } : {})
     }))
   }
 

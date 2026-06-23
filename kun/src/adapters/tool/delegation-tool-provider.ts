@@ -4,7 +4,9 @@ import { LocalToolHost } from './local-tool-host.js'
 
 export function buildDelegationToolProviders(runtime: DelegationRuntime | undefined): CapabilityToolProvider[] {
   if (!runtime) return []
-  const profiles = runtime.listProfiles()
+  // Only subagent/all roles are delegation targets; primary-only personas
+  // are for starting a session, not for delegate_task.
+  const profiles = runtime.listProfiles().filter((profile) => profile.mode !== 'primary')
   const profileNames = profiles.map((profile) => profile.name)
   return [{
     id: 'delegation',
@@ -66,7 +68,7 @@ export function buildDelegationToolProviders(runtime: DelegationRuntime | undefi
 
 function buildDelegateTaskDescription(
   runtime: DelegationRuntime,
-  profiles: { name: string; toolPolicy: string; model?: string; providerId?: string }[]
+  profiles: { name: string; mode: string; toolPolicy: string; model?: string; providerId?: string; description?: string }[]
 ): string {
   const lines = [
     'Run a bounded child agent task and return its summary.',
@@ -75,7 +77,7 @@ function buildDelegateTaskDescription(
   ]
   if (profiles.length) {
     const summary = profiles
-      .map((profile) => `${profile.name} (${profile.toolPolicy}${profile.model ? `, ${profile.model}` : ''}${profile.providerId ? ` @${profile.providerId}` : ''})`)
+      .map((profile) => `${profile.name} (${profile.toolPolicy}${profile.model ? `, ${profile.model}` : ''}${profile.providerId ? ` @${profile.providerId}` : ''})${profile.description ? ` — ${profile.description}` : ''}`)
       .join('; ')
     lines.push(`Available profiles: ${summary}.`)
   }

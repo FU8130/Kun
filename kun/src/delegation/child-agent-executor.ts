@@ -3,7 +3,7 @@ import { InMemoryEventBus } from '../adapters/in-memory-event-bus.js'
 import { InMemorySessionStore } from '../adapters/in-memory-session-store.js'
 import { InMemoryThreadStore } from '../adapters/in-memory-thread-store.js'
 import { InMemoryUserInputGate } from '../adapters/in-memory-user-input-gate.js'
-import type { ImmutablePrefix } from '../cache/immutable-prefix.js'
+import { setSystemPrompt, type ImmutablePrefix } from '../cache/immutable-prefix.js'
 import { SUBAGENT_READ_ONLY_TOOL_NAMES, type ModelCapabilityMetadata } from '../contracts/capabilities.js'
 import type { TurnItem } from '../contracts/items.js'
 import type { ApprovalPolicy, SandboxMode } from '../contracts/policy.js'
@@ -79,12 +79,21 @@ export function createChildAgentExecutor(options: ChildAgentExecutorOptions): Ch
       ids,
       nowIso
     })
-    // Read-only children advertise only investigation tools. The allow-list
-    // is enforced twice by the capability registry: tools outside it are
-    // dropped from the model's tool schema and rejected at execute time.
-    const forcedAllowedToolNames = input.toolPolicy === 'readOnly'
-      ? [...SUBAGENT_READ_ONLY_TOOL_NAMES]
-      : undefined
+    // Tool gating, most-specific first: an explicit allow-list wins; else a
+    // read-only policy restricts to investigation tools; else (inherit) the
+    // child sees the full set. The capability registry enforces the list
+    // twice — dropped from the model's tool schema and rejected at execute.
+    const forcedAllowedToolNames = input.allowedTools
+      ? [...input.allowedTools]
+      : input.toolPolicy === 'readOnly'
+        ? [...SUBAGENT_READ_ONLY_TOOL_NAMES]
+        : undefined
+    // A custom system prompt augments the base prefix (kun tool/safety
+    // conventions stay) on a distinct fingerprint, so same-agent calls still
+    // hit the prompt cache; cross-agent reuse is intentionally given up.
+    const childPrefix = input.systemPrompt?.trim()
+      ? setSystemPrompt(options.prefix, `${options.prefix.systemPrompt}\n\n${input.systemPrompt.trim()}`.trim())
+      : options.prefix
     const loop = new AgentLoop({
       threadStore,
       sessionStore,
@@ -98,7 +107,7 @@ export function createChildAgentExecutor(options: ChildAgentExecutorOptions): Ch
       inflight,
       steering,
       compactor,
-      prefix: options.prefix,
+      prefix: childPrefix,
       ids,
       nowIso,
       ...(forcedAllowedToolNames ? { forcedAllowedToolNames } : {}),

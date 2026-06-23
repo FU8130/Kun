@@ -189,6 +189,10 @@ export type SkillsCapabilityConfig = z.infer<typeof SkillsCapabilityConfig>
 export const SubagentToolPolicy = z.enum(['readOnly', 'inherit'])
 export type SubagentToolPolicy = z.infer<typeof SubagentToolPolicy>
 
+/** Where an agent can be used: a delegated subagent, a primary session persona, or both. */
+export const SubagentMode = z.enum(['subagent', 'primary', 'all'])
+export type SubagentMode = z.infer<typeof SubagentMode>
+
 /**
  * Tools a `readOnly` subagent may call. The list is enforced twice: the
  * child loop advertises only these names (schema filter) and the
@@ -200,14 +204,26 @@ export const SUBAGENT_READ_ONLY_TOOL_NAMES = ['read', 'grep', 'find', 'ls'] as c
 
 export const SubagentProfileConfig = z
   .object({
+    /** Display name for the GUI roster and pickers (falls back to the profile key). */
+    name: z.string().min(1).optional(),
+    /** When-to-use description shown in the delegate_task schema and the GUI. */
+    description: z.string().min(1).optional(),
+    /** UI accent color (hex) for the agent's chip/avatar. */
+    color: z.string().min(1).optional(),
+    /** Where the agent can be used: delegated subagent, primary session persona, or both. */
+    mode: SubagentMode.default('subagent'),
     /** Overrides the child model for this role (falls back to the server default). */
     model: z.string().min(1).optional(),
     /** Routes this role's child to a specific provider id (falls back to the runtime default provider). */
     providerId: z.string().min(1).optional(),
+    /** Persona/instructions appended to the base system prompt for this role (not a full replace). */
+    systemPrompt: z.string().min(1).optional(),
     /** Short instruction prepended to the delegated task prompt. */
     promptPreamble: z.string().min(1).optional(),
     /** Whether the child is restricted to read-only tools or inherits the full set. */
-    toolPolicy: SubagentToolPolicy.default('readOnly')
+    toolPolicy: SubagentToolPolicy.default('readOnly'),
+    /** Exact tool allow-list; overrides toolPolicy when set (e.g. ['read','grep','bash']). */
+    allowedTools: z.array(z.string().min(1)).min(1).optional()
   })
   .strict()
 export type SubagentProfileConfig = z.infer<typeof SubagentProfileConfig>

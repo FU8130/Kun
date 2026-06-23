@@ -18,6 +18,7 @@ import type {
  * is `readOnly`, enforced by the delegation runtime and tool registry).
  */
 export const DESIGN_REVIEWER_PROFILE: SubagentProfileConfig = {
+  mode: 'subagent',
   toolPolicy: 'readOnly',
   promptPreamble: [
     '你是 Kun 内置的设计审查者，以只读方式审查前端代码与原型的视觉与交互质量。',
@@ -37,6 +38,7 @@ export const DESIGN_REVIEWER_PROFILE: SubagentProfileConfig = {
  * a normal review pass) and never edits files (toolPolicy is `readOnly`).
  */
 export const OVER_ENGINEERING_REVIEWER_PROFILE: SubagentProfileConfig = {
+  mode: 'subagent',
   toolPolicy: 'readOnly',
   promptPreamble: [
     '你是 Kun 内置的「过度设计审查者」，以只读方式审查代码的过度设计与不必要的复杂度——只找“能删什么、能用标准库/平台能力替换什么”，',
