@@ -52,7 +52,11 @@ import {
   runtimeRequestViaHost
 } from './runtime/kun-adapter'
 import { waitForRuntimeTurnsIdle } from './runtime/managed-runtime-idle'
-import { setKunUnexpectedExitHandler, type KunUnexpectedExitInfo } from './kun-process'
+import {
+  setKunUnexpectedExitHandler,
+  waitForKunStartupSettled,
+  type KunUnexpectedExitInfo
+} from './kun-process'
 import { RestartBudget, type KunRuntimeStatus } from './kun-runtime-supervisor'
 import { configureLogger, logError, logWarn, pruneOnStartup } from './logger'
 import { createClawRuntime, type ClawRuntime } from './claw-runtime'
@@ -632,6 +636,7 @@ async function probeThreadApi(settings: AppSettingsV1): Promise<
 async function waitForKunHealth(settings: AppSettingsV1, timeoutMs: number): Promise<boolean> {
   const base = getRuntimeBaseUrlForSettings(settings)
   const deadline = Date.now() + timeoutMs
+  let lastError = ''
 
   while (Date.now() <= deadline) {
     try {
@@ -641,12 +646,18 @@ async function waitForKunHealth(settings: AppSettingsV1, timeoutMs: number): Pro
         signal: AbortSignal.timeout(Math.max(250, Math.min(1_000, remaining)))
       })
       if (res.ok && isKunHealthResponseBody(await res.text())) return true
-    } catch {
-      /* retry until the deadline */
+      lastError = `unexpected status ${res.status}`
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg !== lastError) {
+        lastError = msg
+        logWarn('health-probe', `${base}/health: ${msg}`)
+      }
     }
     await sleep(150)
   }
 
+  logWarn('health-probe', `gave up after ${timeoutMs}ms, last error: ${lastError}`)
   return false
 }
 
@@ -1042,6 +1053,10 @@ async function restartRuntime(settings: AppSettingsV1): Promise<void> {
 
 async function restartRuntimeOnce(settings: AppSettingsV1): Promise<void> {
   await waitForQueuedRuntimeSettingsApply()
+  // Don't tear down a child that is still completing its startup; wait for it
+  // to settle so a restart trigger that races a boot doesn't reset the clock
+  // (#544). Resolves immediately when nothing is launching.
+  await waitForKunStartupSettled()
   const runtime = getKunRuntimeSettings(settings)
 
   if (!resolveConfiguredApiKey(settings)) {
@@ -1218,6 +1233,13 @@ async function restartManagedRuntimeForSettingsChange(
 ): Promise<void> {
   if (!runtimeStartupConfigChanged(prev, next)) return
 
+  // Let any in-flight boot launch finish (or fail) before we read liveness
+  // and stop the child. Killing a kun that is still inside its startup window
+  // throws away the boot's progress and restarts the clock — the #544 restart
+  // storm. Once it settles, the child is either healthy (graceful restart
+  // below) or already gone (`wasRunning` is false and we return).
+  await waitForKunStartupSettled()
+
   const runtime = resolveKunRuntimeSettings(next)
   const adapter = kunRuntimeAdapter
   const wasRunning = adapter.isChildRunning()
@@ -1328,6 +1350,10 @@ async function rollbackRuntimeSettingsAfterFailedApply(
 }
 
 async function restartManagedRuntimeForMcpConfigChange(settings: AppSettingsV1): Promise<void> {
+  // See restartManagedRuntimeForSettingsChange: never interrupt an in-flight
+  // boot launch (#544 restart storm).
+  await waitForKunStartupSettled()
+
   const runtime = resolveKunRuntimeSettings(settings)
   const adapter = kunRuntimeAdapter
   const wasRunning = adapter.isChildRunning()
