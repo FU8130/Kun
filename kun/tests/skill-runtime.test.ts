@@ -223,7 +223,7 @@ describe('SkillRuntime', () => {
   })
 
   it('returns no catalog when skills are disabled', async () => {
-    const runtime = await SkillRuntime.create({ enabled: false, roots: [], workspaceRoots: [], legacySkillMd: true })
+    const runtime = await SkillRuntime.create({ enabled: false, roots: [], workspaceRoots: [], globalRoots: [], legacySkillMd: true })
     expect(runtime.catalogInstruction()).toBeUndefined()
   })
 

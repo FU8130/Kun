@@ -116,6 +116,7 @@ describe('HTTP server', () => {
       skills: {
         enabled: false,
         roots: [],
+        globalRoots: [],
         skills: [],
         validationErrors: [],
         lastActivations: []
@@ -174,6 +175,7 @@ describe('HTTP server', () => {
     h.runtime.skills = () => ({
       enabled: true,
       roots: ['/tmp/skills'],
+      globalRoots: [],
       skills: [
         {
           id: 'review',
@@ -181,6 +183,7 @@ describe('HTTP server', () => {
           description: 'Review the current change',
           version: '1.0.0',
           root: '/tmp/skills/review',
+          source: 'project' as const,
           legacy: false,
           triggers: { commands: ['/review'], promptPatterns: [], fileTypes: [] },
           allowedTools: ['read']

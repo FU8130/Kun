@@ -614,6 +614,8 @@ async function skillCapabilityConfigForRuntime(
     enabled: roots.length > 0 || existing.enabled === true,
     roots,
     workspaceRoots: guiSkillWorkspaceRootsForRuntime(settings),
+    // #149: Pass global skill roots from settings (e.g. ~/.kun/skills)
+    globalRoots: existing.globalRoots ?? [],
     legacySkillMd: existing.legacySkillMd === false ? false : true
   }
 }
@@ -662,6 +664,7 @@ function mcpServersFromGuiConfig(config: Record<string, unknown>): Record<string
 function normalizeGuiManagedMcpServer(server: unknown): Record<string, unknown> | null {
   const raw = objectValue(server)
   const command = scalarStringValue(raw.command)
+  const cwd = scalarStringValue(raw.cwd)?.trim()
   const url = scalarStringValue(raw.url)
   const args = stringArrayValue(raw.args)
   const headers = stringRecordValue(raw.headers)
@@ -678,6 +681,7 @@ function normalizeGuiManagedMcpServer(server: unknown): Record<string, unknown> 
     enabled: raw.enabled === false || raw.disabled === true ? false : true,
     transport,
     ...(command ? { command } : {}),
+    ...(transport === 'stdio' && cwd ? { cwd } : {}),
     ...(args.length > 0 ? { args } : {}),
     ...(url ? { url } : {}),
     ...(Object.keys(headers).length > 0 ? { headers } : {}),

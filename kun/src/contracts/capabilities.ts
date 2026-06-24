@@ -112,6 +112,7 @@ export const McpServerConfig = z
     transport: McpTransportKind,
     command: z.string().min(1).optional(),
     args: z.array(z.string()).default([]),
+    cwd: z.string().min(1).optional(),
     url: z.string().min(1).optional(),
     headers: StringRecord.default({}),
     env: StringRecord.default({}),
@@ -183,6 +184,8 @@ export type WebCapabilityConfig = z.infer<typeof WebCapabilityConfig>
 export const SkillsCapabilityConfig = CapabilityToggleConfig.extend({
   roots: z.array(z.string().min(1)).default([]),
   workspaceRoots: z.array(z.string().min(1)).default([]),
+  /** Global skill roots (e.g. ~/.kun/skills). Scanned after project roots. */
+  globalRoots: z.array(z.string().min(1)).default([]),
   legacySkillMd: z.boolean().default(true)
 }).strict()
 export type SkillsCapabilityConfig = z.infer<typeof SkillsCapabilityConfig>

@@ -46,6 +46,8 @@ export type LoadedSkill = {
   assets: string[]
   priority: number
   legacy: boolean
+  /** Source of the skill: 'project' (workspace) or 'global' (user-level). */
+  source: 'project' | 'global'
 }
 
 export type SkillActivation = {
@@ -66,12 +68,14 @@ export type SkillTurnResolution = {
 export type SkillRuntimeDiagnostics = {
   enabled: boolean
   roots: string[]
+  globalRoots: string[]
   skills: Array<{
     id: string
     name: string
     description?: string
     version: string
     root: string
+    source: 'project' | 'global'
     legacy: boolean
     triggers: LoadedSkill['triggers']
     allowedTools: string[]
@@ -122,7 +126,7 @@ export class SkillRuntime {
     config: SkillsCapabilityConfig | undefined,
     options: SkillRuntimeOptions = {}
   ): Promise<SkillRuntime> {
-    const normalized = config ?? { enabled: false, roots: [], workspaceRoots: [], legacySkillMd: true }
+    const normalized = config ?? { enabled: false, roots: [], workspaceRoots: [], globalRoots: [], legacySkillMd: true }
     const resolvedOptions = {
       activeLimit: options.activeLimit ?? DEFAULT_ACTIVE_LIMIT,
       instructionBudgetBytes: options.instructionBudgetBytes ?? DEFAULT_INSTRUCTION_BUDGET_BYTES,
@@ -230,15 +234,19 @@ export class SkillRuntime {
   }
 
   diagnostics(): SkillRuntimeDiagnostics {
+    const projectRoots = this.config.roots ?? []
+    const globalRoots = this.config.globalRoots ?? []
     return {
       enabled: this.config.enabled,
-      roots: [...this.config.roots],
+      roots: [...projectRoots],
+      globalRoots: [...globalRoots],
       skills: this.skills.map((skill) => ({
         id: skill.id,
         name: skill.name,
         ...(skill.description ? { description: skill.description } : {}),
         version: skill.version,
         root: skill.root,
+        source: skill.source,
         legacy: skill.legacy,
         triggers: skill.triggers,
         allowedTools: skill.allowedTools
@@ -416,6 +424,8 @@ async function discoverSkills(config: SkillsCapabilityConfig): Promise<{
 }> {
   const skills: LoadedSkill[] = []
   const validationErrors: Array<{ root: string; message: string }> = []
+
+  // Scan project roots (priority over global — loaded first)
   for (const rawRoot of config.roots) {
     const root = resolve(rawRoot)
     const candidates = await packageCandidates(root).catch((error) => {
@@ -423,13 +433,31 @@ async function discoverSkills(config: SkillsCapabilityConfig): Promise<{
       return []
     })
     for (const candidate of candidates) {
-      const loaded = await loadSkillPackage(candidate, config.legacySkillMd).catch((error) => {
+      const loaded = await loadSkillPackage(candidate, config.legacySkillMd, 'project').catch((error) => {
         validationErrors.push({ root: candidate, message: errorMessage(error) })
         return null
       })
       if (loaded) skills.push(loaded)
     }
   }
+
+  // Scan global roots (#149: global skill loading fix)
+  const globalRoots = config.globalRoots ?? []
+  for (const rawRoot of globalRoots) {
+    const root = resolve(rawRoot)
+    const candidates = await packageCandidates(root).catch((error) => {
+      validationErrors.push({ root, message: errorMessage(error) })
+      return []
+    })
+    for (const candidate of candidates) {
+      const loaded = await loadSkillPackage(candidate, config.legacySkillMd, 'global').catch((error) => {
+        validationErrors.push({ root: candidate, message: errorMessage(error) })
+        return null
+      })
+      if (loaded) skills.push(loaded)
+    }
+  }
+
   const unique = new Map<string, LoadedSkill>()
   for (const skill of skills) {
     if (!unique.has(skill.id)) unique.set(skill.id, skill)
@@ -472,7 +500,7 @@ async function entryIsDirectory(entry: Dirent, path: string): Promise<boolean> {
   }
 }
 
-async function loadSkillPackage(root: string, allowLegacy: boolean): Promise<LoadedSkill | null> {
+async function loadSkillPackage(root: string, allowLegacy: boolean, source: 'project' | 'global'): Promise<LoadedSkill | null> {
   const manifestPath = join(root, 'skill.json')
   if (await exists(manifestPath)) {
     const manifest = SkillManifest.parse(JSON.parse(await readFile(manifestPath, 'utf8')))
@@ -490,7 +518,8 @@ async function loadSkillPackage(root: string, allowLegacy: boolean): Promise<Loa
       allowedTools: manifest.allowedTools,
       assets: manifest.assets.map((asset) => resolve(root, asset)),
       priority: manifest.priority,
-      legacy: false
+      legacy: false,
+      source,
     }
   }
   if (!allowLegacy) return null
@@ -512,7 +541,8 @@ async function loadSkillPackage(root: string, allowLegacy: boolean): Promise<Loa
     allowedTools: [],
     assets: [],
     priority: 0,
-    legacy: true
+    legacy: true,
+    source,
   }
 }
 
