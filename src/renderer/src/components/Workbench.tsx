@@ -29,6 +29,7 @@ import { rendererRuntimeClient } from '../agent/runtime-client'
 import { applyTheme } from '../lib/apply-theme'
 import { useChatStore } from '../store/chat-store'
 import {
+  conversationHasVisionAttachments,
   isClawThread,
   providerIdForComposerModel,
   resolveComposerContextWindowTokens
@@ -572,7 +573,7 @@ export function Workbench(): ReactElement {
   const sddTitleSyncTimerRef = useRef<number | null>(null)
   const lastSyncedSddTitleRef = useRef<Record<string, string>>({})
   const timelineBlocks = blocks
-  const lockVisionToTextModelSwitch = route === 'chat' && timelineBlocks.some((block) => block.kind === 'user')
+  const lockVisionToTextModelSwitch = route === 'chat' && conversationHasVisionAttachments(timelineBlocks)
   const timelineLiveReasoning = liveReasoning
   const timelineLiveAssistant = liveAssistant
   const devPreviewBlocks = useMemo<ChatBlock[]>(() => {

@@ -5,6 +5,7 @@ import type { ChatState, ChatStoreGet, ChatStoreSet, InitialSetupMode, PluginHos
 import type { ComposerPlanMode } from './chat-store-helpers'
 import {
   canSwitchComposerModel,
+  conversationHasVisionAttachments,
   composerModelSelectable,
   composerModeForThread,
   persistComposerMode,
@@ -54,7 +55,6 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
   | 'openClaw'
   | 'openSchedule'
   | 'openWorkflow'
-  | 'openSubagents'
   | 'openInitialSetup'
   | 'closeInitialSetup'
   | 'selectInspectorItem'
@@ -102,7 +102,7 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       const lockVisionToTextSwitch =
         state.route === 'chat' &&
         Array.isArray(state.blocks) &&
-        state.blocks.some((block) => block.kind === 'user')
+        conversationHasVisionAttachments(state.blocks)
       if (!canSwitchComposerModel(
         lockVisionToTextSwitch,
         state.composerModelGroups,
@@ -219,10 +219,6 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
 
     openWorkflow: () => {
       set({ route: 'workflow' })
-    },
-
-    openSubagents: () => {
-      set({ route: 'subagents' })
     },
 
     openInitialSetup: (mode: InitialSetupMode = 'required') =>
