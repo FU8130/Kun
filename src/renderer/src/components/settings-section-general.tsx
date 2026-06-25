@@ -8,7 +8,6 @@ import {
   DEFAULT_WRITE_INLINE_COMPLETION_MODEL,
   DEFAULT_WRITE_INLINE_LONG_COMPLETION_MAX_TOKENS,
   DEFAULT_KUN_DATA_DIR,
-  LEGACY_UI_FONT_SCALE_FACTORS,
   UI_FONT_SCALE_MAX,
   UI_FONT_SCALE_MIN,
   WRITE_INLINE_COMPLETION_MODEL_IDS,
@@ -242,18 +241,6 @@ export function GeneralSettingsSection({ ctx }: { ctx: Record<string, any> }): R
   const fontScale = normalizeUiFontScale(form.uiFontScale)
   const fontScalePercent = Math.round(fontScale * 100)
   const setFontScale = (value: number): void => update({ uiFontScale: normalizeUiFontScale(value) })
-  const fontScalePresets: { value: number; label: string }[] = [
-    { value: LEGACY_UI_FONT_SCALE_FACTORS.small, label: t('fontScaleSmall') },
-    { value: LEGACY_UI_FONT_SCALE_FACTORS.medium, label: t('fontScaleMedium') },
-    { value: LEGACY_UI_FONT_SCALE_FACTORS.large, label: t('fontScaleLarge') }
-  ]
-  const fontScaleChipClass = (active: boolean): string =>
-    [
-      'inline-flex h-7 items-center rounded-full border px-3 text-[12px] font-medium transition',
-      active
-        ? 'border-accent/60 bg-accent/8 text-accent ring-1 ring-accent/30'
-        : 'border-ds-border bg-ds-card text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
-    ].join(' ')
   const cursorSpotlightColor = normalizeHexColor(form.cursorSpotlightColor)
 
   return (
@@ -293,19 +280,6 @@ export function GeneralSettingsSection({ ctx }: { ctx: Record<string, any> }): R
                   description={t('fontScaleDesc')}
                   control={
                     <div className="w-full min-w-0 space-y-2.5 md:max-w-md">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {fontScalePresets.map((preset) => (
-                          <button
-                            key={preset.label}
-                            type="button"
-                            aria-pressed={fontScalePercent === Math.round(preset.value * 100)}
-                            className={fontScaleChipClass(fontScalePercent === Math.round(preset.value * 100))}
-                            onClick={() => setFontScale(preset.value)}
-                          >
-                            {preset.label}
-                          </button>
-                        ))}
-                      </div>
                       <div className="flex items-center gap-3">
                         <span className="shrink-0 text-[12px] leading-none text-ds-faint" aria-hidden="true">
                           A
@@ -332,7 +306,7 @@ export function GeneralSettingsSection({ ctx }: { ctx: Record<string, any> }): R
                           >
                             −
                           </button>
-                          <div className="flex items-center border-x border-ds-border">
+                          <div className="flex h-7 w-[3.75rem] items-center justify-center border-x border-ds-border tabular-nums">
                             <input
                               type="number"
                               min={Math.round(UI_FONT_SCALE_MIN * 100)}
@@ -340,10 +314,10 @@ export function GeneralSettingsSection({ ctx }: { ctx: Record<string, any> }): R
                               step={1}
                               value={fontScalePercent}
                               aria-label={t('fontScale')}
-                              className="w-10 border-0 bg-transparent py-1 text-center text-[13px] font-medium tabular-nums text-ds-ink outline-none"
+                              className="hide-number-spinner w-8 border-0 bg-transparent p-0 text-center text-[13px] font-medium text-ds-ink outline-none"
                               onChange={(e) => setFontScale(Number(e.target.value) / 100)}
                             />
-                            <span className="pr-1.5 text-[11px] text-ds-faint">%</span>
+                            <span className="text-[11px] text-ds-faint">%</span>
                           </div>
                           <button
                             type="button"
