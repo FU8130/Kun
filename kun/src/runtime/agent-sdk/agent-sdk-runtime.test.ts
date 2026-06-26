@@ -175,6 +175,49 @@ describe('AgentSdkRuntime.runTurn', () => {
     expect(finished[0]).toMatchObject({ status: 'failed' })
   })
 
+  test('forwards image attachments as a structured user message (text + image block)', async () => {
+    let prompt: unknown
+    const sdk = fakeSdk(STREAM)
+    const inner = sdk.query
+    sdk.query = (input) => {
+      prompt = (input as { prompt?: unknown }).prompt
+      return inner(input)
+    }
+    const { deps } = makeDeps({
+      loadSdk: async () => sdk,
+      loadTurnContext: async () => ({
+        workspace: '/ws',
+        userText: '这是什么',
+        approvalPolicy: 'auto',
+        images: [{ mediaType: 'image/png', base64: 'AAAA' }],
+        bridgeableTools: []
+      })
+    })
+    await new AgentSdkRuntime(deps).runTurn('th', 'tn', new AbortController().signal)
+
+    expect(typeof prompt).not.toBe('string')
+    const messages: Array<{ message: { content: unknown } }> = []
+    for await (const m of prompt as AsyncIterable<{ message: { content: unknown } }>) messages.push(m)
+    expect(messages).toHaveLength(1)
+    expect(messages[0].message.content).toEqual([
+      { type: 'text', text: '这是什么' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
+    ])
+  })
+
+  test('uses a plain string prompt when there are no images', async () => {
+    let prompt: unknown
+    const sdk = fakeSdk(STREAM)
+    const inner = sdk.query
+    sdk.query = (input) => {
+      prompt = (input as { prompt?: unknown }).prompt
+      return inner(input)
+    }
+    const { deps } = makeDeps({ loadSdk: async () => sdk }) // default ctx: userText 'hello', no images
+    await new AgentSdkRuntime(deps).runTurn('th', 'tn', new AbortController().signal)
+    expect(prompt).toBe('hello')
+  })
+
   test('handlesProvider delegates to deps', () => {
     const { deps } = makeDeps()
     const runtime = new AgentSdkRuntime(deps)

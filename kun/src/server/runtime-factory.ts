@@ -457,7 +457,8 @@ export async function createKunServeRuntime(
           agentSdkProviderIds,
           defaultApprovalPolicy: options.approvalPolicy,
           defaultIsAgentSdk,
-          defaultToken: options.apiKey
+          defaultToken: options.apiKey,
+          ...(attachmentStore ? { attachmentStore } : {})
         })
       : undefined
   const loop = new AgentLoop({

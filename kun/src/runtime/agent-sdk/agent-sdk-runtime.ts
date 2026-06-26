@@ -44,8 +44,35 @@ export interface SdkTurnContext {
   resumeSessionId?: string
   /** Subscription OAuth token; absent => rely on the host's Claude Code login. */
   oauthToken?: string
+  /** Image attachments to forward to the model (base64 + media type). */
+  images?: Array<{ mediaType: string; base64: string }>
   /** kun tool catalog to consider bridging (overlap/excluded are filtered here). */
   bridgeableTools: BridgeableTool[]
+}
+
+/**
+ * When the turn has images, the prompt must be a structured user message (text +
+ * image content blocks) rather than a plain string. We yield a single message in
+ * the SDK's streaming-input form; the generator ending runs exactly one turn.
+ */
+function userMessageStream(
+  text: string,
+  images: ReadonlyArray<{ mediaType: string; base64: string }>
+): AsyncIterable<unknown> {
+  const content: Array<Record<string, unknown>> = []
+  if (text.trim()) content.push({ type: 'text', text })
+  for (const image of images) {
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: image.mediaType, data: image.base64 }
+    })
+  }
+  const message = { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null }
+  return {
+    [Symbol.asyncIterator]: async function* () {
+      yield message
+    }
+  }
 }
 
 export interface SdkRuntimeDeps {
@@ -146,7 +173,11 @@ export class AgentSdkRuntime {
           : {})
       })
 
-      const stream = sdk.query({ prompt: ctx.userText, options })
+      const prompt =
+        ctx.images && ctx.images.length > 0
+          ? userMessageStream(ctx.userText, ctx.images)
+          : ctx.userText
+      const stream = sdk.query({ prompt, options })
       for await (const message of stream) {
         if (signal.aborted) {
           await stream.interrupt?.()

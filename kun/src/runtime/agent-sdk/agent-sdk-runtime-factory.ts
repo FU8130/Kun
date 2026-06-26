@@ -15,6 +15,7 @@ import type { CapabilityRegistry } from '../../adapters/tool/capability-registry
 import type { ToolHostContext } from '../../ports/tool-host.js'
 import type { ApprovalPolicy } from '../../contracts/policy.js'
 import type { ServeProviderConfig } from '../../config/kun-config.js'
+import type { AttachmentStore } from '../../attachments/attachment-store.js'
 
 export interface AgentSdkRuntimeFactoryDeps {
   registry: CapabilityRegistry
@@ -33,6 +34,8 @@ export interface AgentSdkRuntimeFactoryDeps {
   defaultIsAgentSdk?: boolean
   /** Token for the default provider (used when a turn doesn't target a specific provider). */
   defaultToken?: string
+  /** Resolves a turn's image attachments so they can be forwarded to the model. */
+  attachmentStore?: AttachmentStore
   pathToClaudeCodeExecutable?: string
 }
 
@@ -62,6 +65,26 @@ export function createAgentSdkRuntime(deps: AgentSdkRuntimeFactoryDeps): AgentSd
     awaitApproval: async () => 'allow'
   })
 
+  const resolveImages = async (
+    threadId: string,
+    workspace: string,
+    attachmentIds: readonly string[]
+  ): Promise<Array<{ mediaType: string; base64: string }>> => {
+    if (!deps.attachmentStore || attachmentIds.length === 0) return []
+    const images: Array<{ mediaType: string; base64: string }> = []
+    for (const id of attachmentIds) {
+      try {
+        const attachment = await deps.attachmentStore.resolveContent(id, { threadId, workspace })
+        if (typeof attachment.mimeType === 'string' && attachment.mimeType.startsWith('image/')) {
+          images.push({ mediaType: attachment.mimeType, base64: attachment.data.toString('base64') })
+        }
+      } catch {
+        // skip attachments that can't be resolved/authorized
+      }
+    }
+    return images
+  }
+
   const runtimeDeps: SdkRuntimeDeps = {
     handlesProvider: (providerId) => {
       if (providerId && deps.agentSdkProviderIds.has(providerId)) return true
@@ -80,7 +103,10 @@ export function createAgentSdkRuntime(deps: AgentSdkRuntimeFactoryDeps): AgentSd
         .find((item) => item.turnId === turnId && item.kind === 'user_message')
       const userText =
         userItem && 'text' in userItem ? String((userItem as { text?: unknown }).text ?? '') : ''
-      if (!userText.trim()) return null
+      const attachmentIds =
+        (userItem as { attachmentIds?: string[] } | undefined)?.attachmentIds ?? []
+      const images = await resolveImages(threadId, thread.workspace, attachmentIds)
+      if (!userText.trim() && images.length === 0) return null
 
       const providerCfg = thread.providerId ? deps.providerConfigs[thread.providerId] : undefined
       const token = providerCfg?.apiKey?.trim() || deps.defaultToken?.trim()
@@ -99,6 +125,7 @@ export function createAgentSdkRuntime(deps: AgentSdkRuntimeFactoryDeps): AgentSd
         model: thread.model || undefined,
         resumeSessionId: sessionIds.get(threadId),
         oauthToken: token || undefined,
+        ...(images.length ? { images } : {}),
         bridgeableTools
       }
     },
