@@ -95,6 +95,7 @@ import {
 import { FloatingComposerAgentPicker } from './FloatingComposerAgentPicker'
 import { FloatingComposerUserInputPanel } from './FloatingComposerUserInputPanel'
 import { useComposerUserInput, type PendingUserInputBlock } from './use-composer-user-input'
+import { selectLivePendingUserInput } from './user-input-panel-logic'
 import {
   FloatingComposerQueuedMessages,
   type QueuedComposerMessage
@@ -541,11 +542,10 @@ export function FloatingComposer({
   // it. The timeline bubble remains the record in every surface.
   const pendingUserInputBlock = useMemo<PendingUserInputBlock | null>(() => {
     if (compact || route !== 'chat') return null
-    for (let i = blocks.length - 1; i >= 0; i -= 1) {
-      const block = blocks[i]
-      if (block.kind === 'user_input' && block.status === 'pending') return block
-    }
-    return null
+    // Only surface a request the live runtime is actively awaiting. A stale
+    // `pending` block rehydrated from a finished thread must not re-prompt the
+    // user (issue #606) — resolving it would hit a dead gate.
+    return selectLivePendingUserInput(blocks)
   }, [blocks, compact, route])
   const userInput = useComposerUserInput(pendingUserInputBlock, resolveUserInput)
   const fileInputRef = useRef<HTMLInputElement | null>(null)

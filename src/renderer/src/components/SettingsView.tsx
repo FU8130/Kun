@@ -139,6 +139,11 @@ export function SettingsView(): ReactElement {
   const saveTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const statusTimer = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const draftVersion = useRef(0)
+  // Snapshot of a debounced-but-not-yet-persisted edit, flushed on unmount so
+  // exits that bypass goBack() (Esc, route changes, closing settings) don't
+  // drop the last edit made within the 450ms debounce window (issue #602).
+  const pendingSnapshotRef = useRef<AppSettingsV1 | null>(null)
+  const flushOnUnmountRef = useRef<() => void>(() => {})
   const agentsSectionRef = useRef<HTMLDivElement | null>(null)
   const skillSectionRef = useRef<HTMLDivElement | null>(null)
   const mcpSectionRef = useRef<HTMLDivElement | null>(null)
@@ -367,6 +372,8 @@ export function SettingsView(): ReactElement {
     return () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current)
       if (statusTimer.current) window.clearTimeout(statusTimer.current)
+      // Persist any debounced edit that hasn't been flushed yet (issue #602).
+      flushOnUnmountRef.current()
     }
   }, [])
 
@@ -661,18 +668,22 @@ export function SettingsView(): ReactElement {
     setSaveError(null)
 
     if (!hasValidPort(next)) {
+      pendingSnapshotRef.current = null
       setSaveStatus('idle')
       return
     }
 
+    pendingSnapshotRef.current = next
     setSaveStatus('saving')
     saveTimer.current = window.setTimeout(() => {
       saveTimer.current = null
+      pendingSnapshotRef.current = null
       void persistSettings(next, version)
     }, 450)
   }
 
   const flushPendingSave = async (): Promise<void> => {
+    pendingSnapshotRef.current = null
     if (!form || !hasValidPort(form)) return
     draftVersion.current += 1
     const version = draftVersion.current
@@ -687,6 +698,32 @@ export function SettingsView(): ReactElement {
     }
 
     await persistSettings(form, version)
+  }
+
+  // Recomputed every render so the unmount cleanup always sees current values.
+  // Persists the pending snapshot directly over IPC (no React state writes,
+  // since the component is unmounting) and broadcasts the change so other
+  // surfaces stay in sync.
+  flushOnUnmountRef.current = (): void => {
+    const snapshot = pendingSnapshotRef.current
+    pendingSnapshotRef.current = null
+    if (!snapshot || !hasValidPort(snapshot)) return
+    void rendererRuntimeClient
+      .setSettings(expandSettingsHomePathsForUse(snapshot, settingsHomeDir, settingsPlatform))
+      .then((saved) => {
+        const next = coerceRendererSettings(saved)
+        emitRendererSettingsChanged(next)
+        // App-wide effects the normal save path runs, so a last-moment locale or
+        // UI-token edit still takes effect immediately rather than on next start.
+        void applyI18n(next.locale)
+        void reloadUiSettings()
+      })
+      .catch((e) => {
+        const message = e instanceof Error ? e.message : String(e)
+        void window.kunGui?.logError?.('settings', 'Failed to flush settings on unmount', { message }).catch(
+          () => undefined
+        )
+      })
   }
 
   const goBack = (): void => {
