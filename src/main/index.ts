@@ -1,4 +1,16 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerSaveBlocker, Tray } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  powerSaveBlocker,
+  Tray,
+  type ContextMenuParams,
+  type MenuItemConstructorOptions
+} from 'electron'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -425,6 +437,38 @@ function dispatchTrayAction(action: TrayActionPayload): void {
   } else {
     send()
   }
+}
+
+function showRendererContextMenu(window: BrowserWindow, params: ContextMenuParams): void {
+  const template: MenuItemConstructorOptions[] = []
+  const hasSelection = params.selectionText.trim().length > 0
+  if (params.isEditable) {
+    template.push(
+      { role: 'undo', enabled: params.editFlags.canUndo },
+      { role: 'redo', enabled: params.editFlags.canRedo },
+      { type: 'separator' },
+      { role: 'cut', enabled: params.editFlags.canCut },
+      { role: 'copy', enabled: params.editFlags.canCopy || hasSelection },
+      { role: 'paste', enabled: params.editFlags.canPaste },
+      { type: 'separator' },
+      { role: 'selectAll', enabled: params.editFlags.canSelectAll }
+    )
+  } else if (hasSelection) {
+    template.push(
+      { role: 'copy', enabled: true },
+      { type: 'separator' },
+      { role: 'selectAll' }
+    )
+  }
+  if (!app.isPackaged) {
+    if (template.length > 0) template.push({ type: 'separator' })
+    template.push({
+      label: 'Inspect Element',
+      click: () => window.webContents.inspectElement(params.x, params.y)
+    })
+  }
+  if (template.length === 0) return
+  Menu.buildFromTemplate(template).popup({ window, x: params.x, y: params.y })
 }
 
 function quitFromTray(): void {
@@ -1140,6 +1184,12 @@ function createWindow(options: { suppressInitialShow?: boolean } = {}): void {
     const message = error instanceof Error ? error.message : String(error)
     console.error(`[kun-gui] failed to load preload ${preloadPath}:`, error)
     logError('preload', 'Failed to load preload script', { preloadPath, message })
+  })
+  mainWindow.webContents.on('context-menu', (event, params) => {
+    event.preventDefault()
+    const window = mainWindow
+    if (!window || window.isDestroyed()) return
+    showRendererContextMenu(window, params)
   })
   const showWindow = (): void => {
     if (options.suppressInitialShow) return
