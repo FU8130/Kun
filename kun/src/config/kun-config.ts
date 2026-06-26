@@ -211,8 +211,16 @@ export const DEFAULT_STORAGE_CONFIG: StorageConfig = {
  */
 export const ServeProviderConfigSchema = z
   .object({
+    /**
+     * Transport kind. `http` (default) routes turns through a CompatModelClient
+     * over `baseUrl`. `agent-sdk` delegates whole turns to the embedded Claude
+     * Agent SDK (Claude Pro/Max subscription billing): `baseUrl` is unused and
+     * `apiKey` carries the CLAUDE_CODE_OAUTH_TOKEN (empty => rely on the host's
+     * existing Claude Code login).
+     */
+    kind: z.enum(['http', 'agent-sdk']).default('http').optional(),
     apiKey: z.string().default(''),
-    baseUrl: z.string().min(1),
+    baseUrl: z.string().min(1).optional(),
     endpointFormat: z
       .preprocess(normalizeModelEndpointFormat, z.enum(MODEL_ENDPOINT_FORMATS))
       .default(DEFAULT_MODEL_ENDPOINT_FORMAT)
@@ -220,6 +228,15 @@ export const ServeProviderConfigSchema = z
     modelProxyUrl: z.string().optional()
   })
   .strict()
+  .superRefine((cfg, ctx) => {
+    if ((cfg.kind ?? 'http') !== 'agent-sdk' && !cfg.baseUrl) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['baseUrl'],
+        message: 'baseUrl is required for http providers'
+      })
+    }
+  })
 export type ServeProviderConfig = z.infer<typeof ServeProviderConfigSchema>
 
 export const KunServeConfigSchema = z

@@ -12,6 +12,7 @@ import { HybridSessionStore, HybridThreadStore } from '../adapters/hybrid/index.
 import { CompatModelClient } from '../adapters/model/compat-model-client.js'
 import { MultiProviderModelClient } from '../adapters/model/multi-provider-model-client.js'
 import { CapabilityRegistry } from '../adapters/tool/capability-registry.js'
+import { createAgentSdkRuntime } from '../runtime/agent-sdk/agent-sdk-runtime-factory.js'
 import { buildGoalLocalTools } from '../adapters/tool/goal-tools.js'
 import { buildTodoLocalTools } from '../adapters/tool/todo-tools.js'
 import { LocalToolHost, buildDefaultLocalTools } from '../adapters/tool/local-tool-host.js'
@@ -187,13 +188,20 @@ export async function createKunServeRuntime(
   // back to the default client when the id is absent or unknown, so behavior
   // is unchanged for single-provider deployments.
   const providerClients = new Map<string, CompatModelClient>()
+  // Providers whose kind is 'agent-sdk' don't get an HTTP client — their turns
+  // are delegated to the embedded Claude Agent SDK (subscription) instead.
+  const agentSdkProviderIds = new Set<string>()
   for (const [providerId, provider] of Object.entries(options.providers ?? {})) {
     const trimmedId = providerId.trim()
     if (!trimmedId) continue
+    if ((provider.kind ?? 'http') === 'agent-sdk') {
+      agentSdkProviderIds.add(trimmedId)
+      continue
+    }
     providerClients.set(
       trimmedId,
       new CompatModelClient({
-        baseUrl: provider.baseUrl,
+        baseUrl: provider.baseUrl ?? options.baseUrl ?? '',
         apiKey: provider.apiKey,
         modelProxyUrl: provider.modelProxyUrl ?? options.modelProxyUrl,
         endpointFormat: provider.endpointFormat ?? options.endpointFormat ?? DEFAULT_MODEL_ENDPOINT_FORMAT,
@@ -429,6 +437,22 @@ export async function createKunServeRuntime(
       // ignore duplicate/colliding registration
     }
   })
+  // Subscription engine: only constructed when at least one provider is the
+  // 'agent-sdk' kind. Owns the delegated turn for those providers' threads.
+  const sdkRuntime = agentSdkProviderIds.size
+    ? createAgentSdkRuntime({
+        registry,
+        turns: turnService,
+        sessionStore,
+        threadStore,
+        events,
+        ids,
+        prefix,
+        providerConfigs: options.providers ?? {},
+        agentSdkProviderIds,
+        defaultApprovalPolicy: options.approvalPolicy
+      })
+    : undefined
   const loop = new AgentLoop({
     threadStore,
     sessionStore,
@@ -436,6 +460,7 @@ export async function createKunServeRuntime(
     userInputGate,
     model: modelClient,
     toolHost,
+    ...(sdkRuntime ? { sdkRuntime } : {}),
     usage: usageService,
     events,
     turns: turnService,
