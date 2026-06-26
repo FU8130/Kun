@@ -190,7 +190,7 @@ export function SidebarConversationsSection({
               onContextMenu={noOp}
               onPreviewOpen={noOp}
               onPreviewClose={noOp}
-              onPin={() => handlePin(thread.id, thread.pinned === true)}
+              onPin={() => handlePin(thread.id, thread.pinned !== true)}
               onRename={() => openRename(thread)}
               onArchive={() => handleArchive(thread.id)}
               onDelete={() => void handleDelete(thread.id)}
