@@ -43,6 +43,11 @@ import {
   SidebarSearchField,
   SidebarTreeRow
 } from '../sidebar/SidebarPrimitives'
+import {
+  projectPathForWorktreeRecord,
+  resolveProjectWorkspacePath,
+  shouldOmitFromCodeWorkspaceRoots
+} from '../../lib/worktree-project-path'
 import { readThreadWorktreeRegistry, type ThreadWorktreeRecord } from '../../lib/thread-worktree-registry'
 
 type SidebarProjectsSectionProps = {
@@ -137,18 +142,55 @@ function sortWorkspacePathsByActive(workspacePaths: string[], selectedWorkspace:
   return [...workspacePaths].sort((a, b) => compareWorkspacePathsByActive(a, b, selectedWorkspace))
 }
 
+function sidebarWorkspaceResolutionCandidates(options: {
+  workspaceRoot: string
+  workspaceRoots: string[]
+  threadWorktrees?: SidebarThreadWorktrees
+  threads?: NormalizedThread[]
+}): string[] {
+  const candidates = new Set<string>()
+  const selectedWorkspace = normalizeWorkspaceRoot(options.workspaceRoot)
+  if (selectedWorkspace) candidates.add(selectedWorkspace)
+  for (const workspacePath of options.workspaceRoots) {
+    const normalized = normalizeWorkspaceRoot(workspacePath)
+    if (normalized) candidates.add(normalized)
+  }
+  for (const record of Object.values(options.threadWorktrees ?? {})) {
+    const projectPath = projectPathForWorktreeRecord(record)
+    if (projectPath) candidates.add(projectPath)
+  }
+  for (const thread of options.threads ?? []) {
+    const normalized = normalizeWorkspaceRoot(thread.workspace)
+    if (normalized) candidates.add(normalized)
+  }
+  return [...candidates]
+}
+
 function workspacePathForWorktreeRecord(record: Pick<ThreadWorktreeRecord, 'projectPath' | 'worktreePath'> | undefined): string {
-  const projectPath = normalizeWorkspaceRoot(record?.projectPath ?? '')
-  const worktreePath = normalizeWorkspaceRoot(record?.worktreePath ?? '')
-  return projectPath && worktreePath ? projectPath : ''
+  return projectPathForWorktreeRecord(record)
 }
 
-function sidebarWorkspacePathForThread(thread: NormalizedThread, worktrees: SidebarThreadWorktrees = {}): string {
+function sidebarWorkspacePathForThread(
+  thread: NormalizedThread,
+  worktrees: SidebarThreadWorktrees = {},
+  candidateProjectPaths: readonly string[] = []
+): string {
   const worktreeProjectPath = workspacePathForWorktreeRecord(worktrees[thread.id])
-  return worktreeProjectPath || normalizeWorkspaceRoot(thread.workspace)
+  if (worktreeProjectPath) return worktreeProjectPath
+  const resolved = resolveProjectWorkspacePath(thread.workspace, {
+    threadWorktrees: worktrees,
+    candidateProjectPaths
+  })
+  if (resolved) return resolved
+  if (shouldOmitFromCodeWorkspaceRoots(thread.workspace)) return ''
+  return normalizeWorkspaceRoot(thread.workspace)
 }
 
-function sidebarWorkspacePathForRememberedRoot(workspacePath: string, worktrees: SidebarThreadWorktrees = {}): string {
+function sidebarWorkspacePathForRememberedRoot(
+  workspacePath: string,
+  worktrees: SidebarThreadWorktrees = {},
+  candidateProjectPaths: readonly string[] = []
+): string {
   const normalized = normalizeWorkspaceRoot(workspacePath)
   const key = workspaceRootIdentityKey(normalized)
   if (!key) return ''
@@ -158,6 +200,12 @@ function sidebarWorkspacePathForRememberedRoot(workspacePath: string, worktrees:
       return workspacePathForWorktreeRecord(record) || normalized
     }
   }
+  const resolved = resolveProjectWorkspacePath(normalized, {
+    threadWorktrees: worktrees,
+    candidateProjectPaths
+  })
+  if (resolved) return resolved
+  if (shouldOmitFromCodeWorkspaceRoots(normalized)) return ''
   return normalized
 }
 
@@ -186,6 +234,7 @@ export function buildSidebarWorkspaceGroups(options: {
   const selectedWorkspace = normalizeWorkspaceRoot(options.workspaceRoot)
   const selectedWorkspaceKey = workspaceRootIdentityKey(selectedWorkspace)
   const query = options.searchQuery.trim().toLowerCase()
+  const candidateProjectPaths = sidebarWorkspaceResolutionCandidates(options)
 
   const upsertWorkspace = (workspacePath: string, threads: NormalizedThread[] = []): void => {
     const normalized = normalizeWorkspaceRoot(workspacePath)
@@ -207,7 +256,7 @@ export function buildSidebarWorkspaceGroups(options: {
     if (isInternalDeepSeekGuiWorkspace(th.workspace)) continue
     if (isClawWorkspacePath(th.workspace)) continue
     if ((th.archived === true) !== options.showArchived) continue
-    const key = sidebarWorkspacePathForThread(th, options.threadWorktrees)
+    const key = sidebarWorkspacePathForThread(th, options.threadWorktrees, candidateProjectPaths)
     if (!key) continue
     if (query) {
       const haystack = [th.title, th.preview, key, workspaceLabelFromPath(key), th.workspace]
@@ -224,7 +273,11 @@ export function buildSidebarWorkspaceGroups(options: {
   }
   if (!query && !options.showArchived) {
     for (const workspacePath of options.workspaceRoots) {
-      const key = sidebarWorkspacePathForRememberedRoot(workspacePath, options.threadWorktrees)
+      const key = sidebarWorkspacePathForRememberedRoot(
+        workspacePath,
+        options.threadWorktrees,
+        candidateProjectPaths
+      )
       if (!key || map.has(workspaceRootIdentityKey(key))) continue
       if (isInternalTemporaryWorkspace(key)) continue
       if (isInternalDeepSeekGuiWorkspace(key)) continue
@@ -250,6 +303,7 @@ export function buildSidebarDraftWorkspacePaths(options: {
 }): string[] {
   const map = new Map<string, string>()
   const selectedWorkspace = normalizeWorkspaceRoot(options.workspaceRoot)
+  const candidateProjectPaths = sidebarWorkspaceResolutionCandidates(options)
 
   const upsertWorkspace = (workspacePath: string): void => {
     const normalized = normalizeWorkspaceRoot(workspacePath)
@@ -264,10 +318,16 @@ export function buildSidebarDraftWorkspacePaths(options: {
 
   upsertWorkspace(selectedWorkspace)
   for (const workspacePath of options.workspaceRoots) {
-    upsertWorkspace(sidebarWorkspacePathForRememberedRoot(workspacePath, options.threadWorktrees))
+    upsertWorkspace(
+      sidebarWorkspacePathForRememberedRoot(
+        workspacePath,
+        options.threadWorktrees,
+        candidateProjectPaths
+      )
+    )
   }
   for (const thread of options.threads) {
-    upsertWorkspace(sidebarWorkspacePathForThread(thread, options.threadWorktrees))
+    upsertWorkspace(sidebarWorkspacePathForThread(thread, options.threadWorktrees, candidateProjectPaths))
   }
 
   return sortWorkspacePathsByActive([...map.values()], selectedWorkspace)

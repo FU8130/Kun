@@ -287,7 +287,10 @@ export function createThreadActions(
       // Setting it active first lets refreshThreads preserve it in the sidebar.
       set((s) => ({
         activeThreadId: t.id,
-        codeWorkspaceRoots: rememberCodeWorkspaceRoots(s.codeWorkspaceRoots, [workspaceRoot, t.workspace]),
+        codeWorkspaceRoots: rememberCodeWorkspaceRoots(
+          s.codeWorkspaceRoots,
+          [acquiredWorktree?.projectPath ?? workspaceRoot]
+        ),
         threads: s.threads.some((thread) => thread.id === t.id) ? s.threads : [t, ...s.threads]
       }))
       await get().selectThread(t.id)

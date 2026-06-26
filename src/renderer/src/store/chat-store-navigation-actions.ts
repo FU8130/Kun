@@ -27,6 +27,8 @@ import {
 } from '../lib/thread-fork-registry'
 import { workspaceLabelFromPath } from '../lib/workspace-label'
 import { isInternalTemporaryWorkspace, normalizeWorkspaceRoot } from '../lib/workspace-path'
+import { resolveProjectWorkspacePath } from '../lib/worktree-project-path'
+import { readThreadWorktreeRegistry } from '../lib/thread-worktree-registry'
 import { buildClawRuntimePrompt, getActiveAgentApiKey } from '@shared/app-settings'
 import type { ChatState, ChatStoreGet, ChatStoreSet } from './chat-store-types'
 import {
@@ -733,12 +735,27 @@ export function createNavigationActions(
         const writeWorkspace = writeWorkspaceForThreadId(thread.id, writeRegistry)
         return writeWorkspace ? { ...thread, workspace: writeWorkspace } : thread
       })
+      const threadWorktreeRegistry = readThreadWorktreeRegistry().worktrees
+      const workspaceCandidates = [
+        get().workspaceRoot,
+        ...get().codeWorkspaceRoots,
+        ...threads.map((thread) => thread.workspace),
+        ...displayThreads.map((thread) => thread.workspace)
+      ]
       const codeThreadWorkspaceRoots = [
         ...threads,
         ...displayThreads
       ]
         .filter((thread) => isCodeThread(thread, get().clawChannels, writeRegistry))
-        .map((thread) => thread.workspace)
+        .map((thread) => {
+          const record = threadWorktreeRegistry[thread.id]
+          if (record?.projectPath?.trim()) return record.projectPath.trim()
+          return resolveProjectWorkspacePath(thread.workspace, {
+            threadWorktrees: threadWorktreeRegistry,
+            candidateProjectPaths: workspaceCandidates
+          })
+        })
+        .filter(Boolean)
       const codeWorkspaceRoots = reconcileCodeWorkspaceRoots({
         currentRoots: get().codeWorkspaceRoots,
         codeThreadWorkspaceRoots,
