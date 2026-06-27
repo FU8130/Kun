@@ -5,6 +5,7 @@ import { useChatStore } from '../../store/chat-store'
 import { workspaceLabelFromPath } from '../../lib/workspace-label'
 import {
   isClawWorkspacePath,
+  isConversationWorkspacePath,
   isInternalDeepSeekGuiWorkspace,
   isInternalTemporaryWorkspace,
   normalizeWorkspaceRoot,
@@ -59,6 +60,7 @@ export function buildWorkspaceProjectPickerOptions(options: {
   currentWorkspaceRoot: string
   workspaceRoots: readonly string[]
   threadWorktrees?: WorkspaceProjectPickerWorktrees
+  conversationWorkspaceRoot?: string
 }): { currentRoot: string, options: WorkspaceOption[] } {
   const threadWorktrees = options.threadWorktrees ?? {}
   const candidateProjectPaths = [
@@ -75,7 +77,7 @@ export function buildWorkspaceProjectPickerOptions(options: {
   const out: WorkspaceOption[] = []
   for (const raw of [currentRoot, ...options.workspaceRoots]) {
     const root = workspaceProjectRootForPicker(raw, threadWorktrees, candidateProjectPaths)
-    if (!isWorkspaceProjectPickerRoot(root)) continue
+    if (!isWorkspaceProjectPickerRoot(root, options.conversationWorkspaceRoot)) continue
     const key = workspaceRootIdentityKey(root)
     if (seen.has(key)) continue
     seen.add(key)
@@ -88,18 +90,21 @@ export function buildWorkspaceProjectPickerOptions(options: {
   }
 }
 
-function isWorkspaceProjectPickerRoot(root: string): boolean {
+function isWorkspaceProjectPickerRoot(root: string, conversationRoot?: string): boolean {
   const normalized = normalizeWorkspaceRoot(root)
   if (!normalized) return false
   if (isInternalTemporaryWorkspace(normalized)) return false
   if (isInternalDeepSeekGuiWorkspace(normalized)) return false
   if (isClawWorkspacePath(normalized)) return false
+  // Exclude conversation workspaces created via "New Conversation"
+  if (isConversationWorkspacePath(normalized, conversationRoot)) return false
   return true
 }
 
 export function WorkspaceProjectPicker({ currentWorkspaceRoot }: Props): ReactElement {
   const { t } = useTranslation('common')
   const codeWorkspaceRoots = useChatStore((s) => s.codeWorkspaceRoots)
+  const conversationWorkspaceRoot = useChatStore((s) => s.conversationWorkspaceRoot)
   const selectWorkspaceRoot = useChatStore((s) => s.selectWorkspaceRoot)
   const chooseWorkspace = useChatStore((s) => s.chooseWorkspace)
   const runtimeReady = useChatStore((s) => s.runtimeConnection === 'ready')
@@ -115,9 +120,10 @@ export function WorkspaceProjectPicker({ currentWorkspaceRoot }: Props): ReactEl
     return buildWorkspaceProjectPickerOptions({
       currentWorkspaceRoot: current,
       workspaceRoots: codeWorkspaceRoots,
-      threadWorktrees: readThreadWorktreeRegistry().worktrees
+      threadWorktrees: readThreadWorktreeRegistry().worktrees,
+      conversationWorkspaceRoot
     })
-  }, [codeWorkspaceRoots, current])
+  }, [codeWorkspaceRoots, current, conversationWorkspaceRoot])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
