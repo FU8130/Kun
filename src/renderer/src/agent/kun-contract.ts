@@ -261,6 +261,13 @@ export type CoreRuntimeInfoJson = {
   insecure?: boolean
   startedAt: string
   pid?: number
+  memoryUsage?: {
+    rssBytes: number
+    peakRssBytes: number
+    heapUsedBytes: number
+    heapTotalBytes: number
+    externalBytes: number
+  }
   capabilities: CoreRuntimeCapabilityManifestJson
 }
 

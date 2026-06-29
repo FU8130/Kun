@@ -570,21 +570,32 @@ export async function createKunServeRuntime(
     insecure: options.insecure,
     allocateSeq,
     nowIso,
-    info: () => ({
-      host: options.host,
-      port: options.port,
-      configPath: options.configPath,
-      dataDir: options.dataDir,
-      model: options.model,
-      endpointFormat: options.endpointFormat ?? DEFAULT_MODEL_ENDPOINT_FORMAT,
-      approvalPolicy: options.approvalPolicy,
-      sandboxMode: options.sandboxMode,
-      tokenEconomyMode: options.tokenEconomyMode,
-      insecure: options.insecure,
-      startedAt,
-      pid: process.pid,
-      capabilities
-    }),
+    info: () => {
+      const memory = process.memoryUsage()
+      const peakRssBytes = Math.max(memory.rss, process.resourceUsage().maxRSS * 1024)
+      return {
+        host: options.host,
+        port: options.port,
+        configPath: options.configPath,
+        dataDir: options.dataDir,
+        model: options.model,
+        endpointFormat: options.endpointFormat ?? DEFAULT_MODEL_ENDPOINT_FORMAT,
+        approvalPolicy: options.approvalPolicy,
+        sandboxMode: options.sandboxMode,
+        tokenEconomyMode: options.tokenEconomyMode,
+        insecure: options.insecure,
+        startedAt,
+        pid: process.pid,
+        memoryUsage: {
+          rssBytes: memory.rss,
+          peakRssBytes,
+          heapUsedBytes: memory.heapUsed,
+          heapTotalBytes: memory.heapTotal,
+          externalBytes: memory.external
+        },
+        capabilities
+      }
+    },
     toolDiagnostics: async () => ({
       providers: registry.diagnostics(),
       mcpServers: mcpProviders.diagnostics,
