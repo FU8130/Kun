@@ -10,7 +10,6 @@ import {
   resolveWorkspacePath,
   withToolBoundary
 } from './builtin-tool-utils.js'
-import { remoteRead } from './remote-file-tools.js'
 
 export function createReadLocalTool(options: ReadLocalToolOptions = {}): LocalTool {
   const statOp = options.operations?.stat ?? defaultReadLocalToolOperations.stat!
@@ -34,7 +33,6 @@ export function createReadLocalTool(options: ReadLocalToolOptions = {}): LocalTo
     },
     policy: 'auto',
     execute: async (args, context) => withToolBoundary(async () => {
-      if (context.executionTarget) return remoteRead(context.executionTarget, args, context)
       const rawPath = typeof args.path === 'string' ? args.path : ''
       if (!rawPath.trim()) {
         return {

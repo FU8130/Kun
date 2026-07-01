@@ -12,7 +12,6 @@ import type {
   UserFileReference,
   UserInputAnswer
 } from '../agent/types'
-import type { RemoteTargetInput } from '../agent/remote-target'
 import type { KunRuntimeStatusPayload } from '@shared/kun-gui-api'
 import type {
   ClawImAgentProfileV1,
@@ -184,7 +183,6 @@ export type ChatState = {
   composerProviderId: string
   composerPickList: string[]
   composerModelGroups: ModelProviderModelGroup[]
-  composerRemoteTarget: RemoteTargetInput | null
   /**
    * Optional subagent profile id selected as the persona for the next new
    * thread / next-turn override. Empty = use the runtime default.
@@ -206,7 +204,6 @@ export type ChatState = {
   setError: (message: string | null) => void
   setComposerMode: (mode: 'plan' | 'agent') => void
   setComposerModel: (modelId: string, providerId?: string) => void
-  setComposerRemoteTarget: (target: RemoteTargetInput | null) => void
   setComposerAgentId: (agentId: string) => void
   loadComposerModels: () => Promise<void>
   setRoute: (r: AppRoute) => void

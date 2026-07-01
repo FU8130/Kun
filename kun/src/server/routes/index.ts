@@ -57,7 +57,6 @@ import {
   backgroundShellStop
 } from './background-shells.js'
 import { authorizeMcpOAuth, clearMcpOAuth, mcpOAuthDiagnostics } from './mcp-oauth.js'
-import { listRemoteHosts, listRemoteProfiles, testRemoteConnection } from './remote.js'
 import { isAuthorized, bearerToken } from '../auth.js'
 import { ERRORS } from './runtime-error.js'
 import type { ServerRuntime } from './server-runtime.js'
@@ -125,18 +124,6 @@ export function buildRouter(runtime: ServerRuntime): Router {
   router.add('GET', '/v1/skills', async (request) => {
     if (!authorize(request, runtime)) return ERRORS.unauthorized()
     return listSkills(runtime)
-  })
-  router.add('GET', '/v1/remote/hosts', async (request) => {
-    if (!authorize(request, runtime)) return ERRORS.unauthorized()
-    return listRemoteHosts(runtime)
-  })
-  router.add('POST', '/v1/remote/test', async (request) => {
-    if (!authorize(request, runtime)) return ERRORS.unauthorized()
-    return testRemoteConnection(runtime, request)
-  })
-  router.add('GET', '/v1/remote/profiles', async (request) => {
-    if (!authorize(request, runtime)) return ERRORS.unauthorized()
-    return listRemoteProfiles(runtime)
   })
   router.add('POST', '/v1/attachments', async (request) => {
     if (!authorize(request, runtime)) return ERRORS.unauthorized()
@@ -218,19 +205,11 @@ export function buildRouter(runtime: ServerRuntime): Router {
   })
   router.add('PATCH', '/v1/threads/:id', async (request, ctx) => {
     if (!authorize(request, runtime)) return ERRORS.unauthorized()
-    const patchPromise = request.clone().json().catch(() => null) as Promise<{ remoteTarget?: unknown; status?: string } | null>
-    const response = await updateThread(runtime.threadService, ctx.params.id, request)
-    const patch = await patchPromise
-    if (response.status < 400 && (patch?.remoteTarget === null || patch?.status === 'archived' || patch?.status === 'deleted')) {
-      runtime.disposeThreadResources?.(ctx.params.id)
-    }
-    return response
+    return updateThread(runtime.threadService, ctx.params.id, request)
   })
   router.add('DELETE', '/v1/threads/:id', async (request, ctx) => {
     if (!authorize(request, runtime)) return ERRORS.unauthorized()
-    const response = await deleteThread(runtime.threadService, ctx.params.id)
-    if (response.status < 400) runtime.disposeThreadResources?.(ctx.params.id)
-    return response
+    return deleteThread(runtime.threadService, ctx.params.id)
   })
   router.add('POST', '/v1/threads/:id/fork', async (request, ctx) => {
     if (!authorize(request, runtime)) return ERRORS.unauthorized()

@@ -70,7 +70,6 @@ export function threadFromCore(thread: CoreThreadSummaryJson): NormalizedThread 
     forkedAt: thread.forkedAt,
     forkedFromMessageCount: thread.forkedFromMessageCount,
     forkedFromTurnCount: thread.forkedFromTurnCount,
-    ...(thread.remoteTarget ? { remoteTarget: thread.remoteTarget } : {}),
     goal: thread.goal ? goalFromCore(thread.goal) : null,
     todos: thread.todos ? todosFromCore(thread.todos) : null
   }

@@ -48,7 +48,6 @@ export function createInitialChatStoreState(workingDirectoryLabel: string) {
     composerAgentId: '',
     composerPickList: mergeComposerPickList(false, []),
     composerModelGroups: [],
-    composerRemoteTarget: null,
     disabledSkillIds: [],
     queuedMessages: [],
     watchTurnCompletion: {},

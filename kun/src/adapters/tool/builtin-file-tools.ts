@@ -15,7 +15,6 @@ import type { EditLocalToolOptions, WriteLocalToolOptions } from './builtin-tool
 import { defaultEditLocalToolOperations, defaultWriteLocalToolOperations } from './builtin-tool-operations.js'
 import { parseEditInstructions, resolveWorkspacePath, withToolBoundary } from './builtin-tool-utils.js'
 import { assertCanWritePath } from './sandbox-policy.js'
-import { remoteEdit, remoteWrite } from './remote-file-tools.js'
 
 /**
  * Arguments that failed JSON parsing arrive as `{ __raw: "<partial json>" }`
@@ -54,7 +53,6 @@ export function createWriteLocalTool(_options: WriteLocalToolOptions = {}): Loca
     policy: 'on-request',
     toolKind: 'file_change',
     execute: async (args, context) => withToolBoundary(async () => {
-      if (context.executionTarget) return remoteWrite(context.executionTarget, args, context)
       const truncated = truncatedArgumentsError(args.__raw)
       if (truncated) return truncated
       const rawPath = typeof args.path === 'string' ? args.path : ''
@@ -113,7 +111,6 @@ export function createEditLocalTool(_options: EditLocalToolOptions = {}): LocalT
     policy: 'on-request',
     toolKind: 'file_change',
     execute: async (args, context) => withToolBoundary(async () => {
-      if (context.executionTarget) return remoteEdit(context.executionTarget, args, context)
       const truncated = truncatedArgumentsError(args.__raw)
       if (truncated) return truncated
       const rawPath = typeof args.path === 'string' ? args.path : ''

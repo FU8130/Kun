@@ -11,7 +11,6 @@ import type {
   ThreadMode,
   ThreadRecord,
   ThreadRelation,
-  ThreadRemoteTarget,
   ThreadStatus,
   ThreadTodoItem,
   ThreadTodoList,
@@ -137,7 +136,6 @@ export class ThreadService {
       mode: request.mode,
       approvalPolicy: request.approvalPolicy,
       sandboxMode: request.sandboxMode,
-      ...(request.remoteTarget ? { remoteTarget: request.remoteTarget } : {}),
       ...(request.costBudgetUsd !== undefined ? { costBudgetUsd: request.costBudgetUsd } : {}),
       ...(options.relation ? { relation: options.relation } : {}),
       ...(options.parentThreadId ? { parentThreadId: options.parentThreadId } : {}),
@@ -160,7 +158,6 @@ export class ThreadService {
     status?: ThreadStatus
     approvalPolicy?: ApprovalPolicy
     sandboxMode?: SandboxMode
-    remoteTarget?: ThreadRemoteTarget | null
     pinned?: boolean
     costBudgetUsd?: number | null
     costBudgetWarningSent?: boolean
@@ -168,10 +165,8 @@ export class ThreadService {
   }): Promise<ThreadRecord> {
     const current = await this.threadStore.get(threadId)
     if (!current) throw new Error(`thread not found: ${threadId}`)
-    const { costBudgetUsd, costBudgetWarningSent, remoteTarget, ...standardPatch } = patch
+    const { costBudgetUsd, costBudgetWarningSent, ...standardPatch } = patch
     const merged: ThreadRecord = { ...current, ...standardPatch }
-    if (remoteTarget === null) delete (merged as { remoteTarget?: ThreadRemoteTarget }).remoteTarget
-    else if (remoteTarget !== undefined) merged.remoteTarget = remoteTarget
     if (costBudgetUsd === null) {
       delete (merged as { costBudgetUsd?: number }).costBudgetUsd
       delete (merged as { costBudgetWarningSent?: boolean }).costBudgetWarningSent

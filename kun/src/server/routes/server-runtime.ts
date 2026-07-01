@@ -33,7 +33,6 @@ import type { MemoryStore } from '../../memory/memory-store.js'
 import type { ReviewTarget } from '../../contracts/review.js'
 import type { DelegationRuntime } from '../../delegation/delegation-runtime.js'
 import type { BackgroundShellRuntime } from '../../services/background-shell-runtime.js'
-import type { RemoteHostsService } from '../../remote/remote-hosts-service.js'
 import type { ModelClient } from '../../ports/model-client.js'
 import type { RolesConfig } from '../../config/kun-config.js'
 import type { ImmutablePrefix } from '../../cache/immutable-prefix.js'
@@ -80,7 +79,6 @@ export type ServerRuntime = {
    */
   delegationRuntime?: DelegationRuntime
   backgroundShellRuntime?: BackgroundShellRuntime
-  remote?: RemoteHostsService
   /**
    * Default ModelClient + model id for one-shot completions outside the
    * agent loop (e.g. AI-generated subagent profiles). Optional so test
@@ -106,7 +104,6 @@ export type ServerRuntime = {
    * of goals resumed. Optional so embedders without the agent loop can omit it.
    */
   resumeInterruptedGoals?(threadIds: readonly string[]): Promise<number>
-  disposeThreadResources?(threadId: string): void
   runReview?(input: {
     threadId: string
     turnId: string
