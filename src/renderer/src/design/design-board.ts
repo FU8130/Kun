@@ -142,28 +142,61 @@ function autoArtifactNode(artifact: DesignArtifact, index: number): DesignArtifa
   return artifact.node?.sizeMode === 'auto' && !artifactNodeIsDefault(artifact.node, index) ? artifact.node : null
 }
 
+/** The generic, content-agnostic frame size for an artifact's current target/role. */
+function genericFrameSizeForArtifact(
+  artifact: DesignArtifact,
+  designTarget: DesignTarget | undefined
+): Pick<Rect, 'width' | 'height'> {
+  return isFoundationArtifact(artifact)
+    ? defaultFrameSizeForDesignTarget('web')
+    : defaultFrameSizeForDesignTarget(designTarget)
+}
+
+/**
+ * The frame size an artifact's real HTML content has already been measured to
+ * (via HtmlFrameOverlay's live auto-grow), or null if it has never been
+ * measured (still sitting at a pristine template default). Regular screens and
+ * foundation reference docs (design system / logo) both auto-grow to their
+ * real content height — this must stay in sync with `measureContentSize` in
+ * HtmlFrameOverlay.tsx, otherwise a correctly measured page gets stomped back
+ * to the generic placeholder size the next time this sync runs (which is
+ * every time ANY artifact's node changes, since board sync recomputes for all
+ * artifacts from current state).
+ */
+function measuredFrameSizeForArtifact(
+  artifact: DesignArtifact,
+  index: number
+): Pick<Rect, 'width' | 'height'> | null {
+  const measuredAutoNode = autoArtifactNode(artifact, index)
+  if (!measuredAutoNode) return null
+  const measuredWidth = Math.round(measuredAutoNode.width)
+  const measuredHeight = Math.round(measuredAutoNode.height)
+  if (isFoundationArtifact(artifact)) {
+    // Foundation frames migrated from the old compact 420-wide "card" preset
+    // report that legacy width as their auto node before ever being measured
+    // for real. Treat the width (only) as "not yet measured" in that case —
+    // the height may still be a genuine measurement worth keeping.
+    const compact = defaultDesignArtifactNode(index)
+    const hasLegacyCompactWidth = Math.abs(measuredWidth - compact.width) < 1
+    return {
+      width: hasLegacyCompactWidth
+        ? defaultFrameSizeForDesignTarget('web').width
+        : Math.max(BOARD_HTML_FRAME_MIN_WIDTH, measuredWidth),
+      height: Math.max(BOARD_HTML_FRAME_MIN_HEIGHT, measuredHeight)
+    }
+  }
+  return {
+    width: Math.max(BOARD_HTML_FRAME_MIN_WIDTH, measuredWidth),
+    height: Math.max(BOARD_HTML_FRAME_MIN_HEIGHT, measuredHeight)
+  }
+}
+
 function defaultFrameSizeForArtifact(
   artifact: DesignArtifact,
   index: number,
   designTarget: DesignTarget | undefined
 ): Pick<Rect, 'width' | 'height'> {
-  if (isFoundationArtifact(artifact)) {
-    const measuredAutoNode = autoArtifactNode(artifact, index)
-    const foundationFrame = defaultFrameSizeForDesignTarget('web')
-    const compact = defaultDesignArtifactNode(index)
-    const measuredWidth = measuredAutoNode ? Math.round(measuredAutoNode.width) : 0
-    const hasLegacyCompactWidth =
-      measuredAutoNode && Math.abs(measuredWidth - compact.width) < 1
-    return {
-      width: measuredAutoNode && !hasLegacyCompactWidth
-        ? Math.max(BOARD_HTML_FRAME_MIN_WIDTH, Math.round(measuredAutoNode.width))
-        : foundationFrame.width,
-      height: measuredAutoNode
-        ? Math.max(BOARD_HTML_FRAME_MIN_HEIGHT, Math.round(measuredAutoNode.height))
-        : foundationFrame.height
-    }
-  }
-  return defaultFrameSizeForDesignTarget(designTarget)
+  return measuredFrameSizeForArtifact(artifact, index) ?? genericFrameSizeForArtifact(artifact, designTarget)
 }
 
 function defaultDevicePresetForArtifact(
@@ -255,15 +288,24 @@ export function syncHtmlArtifactsToBoardDocument(
       const nextName = artifact.title || existing.name
       if (existing.name !== nextName) patch.name = nextName
       if (!customNode) {
+        // A stale device preset means the design target genuinely changed for
+        // this frame (e.g. Web -> App) — snap it to the new target's base size
+        // even if it still holds an old measurement. Otherwise trust a real
+        // content measurement (defaultFrameSize already prefers it) instead of
+        // resetting to the generic placeholder size on every unrelated sync.
+        const presetChanged = existing.devicePreset !== defaultDevicePreset
+        const nextSize = presetChanged
+          ? genericFrameSizeForArtifact(artifact, designTarget)
+          : defaultFrameSize
         if (!rectsAlmostEqual({ x: existing.x, y: existing.y, width: existing.width, height: existing.height }, {
           x: existing.x,
           y: existing.y,
-          ...defaultFrameSize
+          ...nextSize
         })) {
-          patch.width = defaultFrameSize.width
-          patch.height = defaultFrameSize.height
+          patch.width = nextSize.width
+          patch.height = nextSize.height
         }
-        if (existing.devicePreset !== defaultDevicePreset) patch.devicePreset = defaultDevicePreset
+        if (presetChanged) patch.devicePreset = defaultDevicePreset
       }
       if (Object.keys(patch).length > 0) {
         if (!next) next = cloneDocument(doc)

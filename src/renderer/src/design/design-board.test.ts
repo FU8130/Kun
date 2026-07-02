@@ -393,6 +393,44 @@ describe('design board helpers', () => {
     })
   })
 
+  it('keeps a regular (non-foundation) screen at its measured auto-grown size across re-syncs', () => {
+    // Regression test: HtmlFrameOverlay's live measurement grows a REGULAR page's
+    // frame (not just foundation design-system/logo docs) to match its real HTML
+    // content and writes that height into the artifact node. Because board sync
+    // recomputes for every artifact whenever ANY artifact's node changes, it must
+    // not stomp this measured height back to the generic target placeholder size
+    // on the next (unrelated) re-sync — that reset is exactly what produced a
+    // short, clipped frame showing mostly blank space below real content.
+    const doc = createEmptyDocument()
+    const root = doc.objects[doc.rootId]
+    const existing = createHtmlFrameShape('首页', 2080, -400, 'home', 'desktop')
+    existing.width = 1280
+    existing.height = 800
+    doc.objects[existing.id] = { ...existing, parentId: doc.rootId }
+    doc.objects[doc.rootId] = { ...root, children: [existing.id] }
+
+    const measuredArtifact = artifact('home', 'html', {
+      title: '首页',
+      node: { x: 2080, y: -400, width: 1852, height: 2903, sizeMode: 'auto' }
+    })
+
+    const firstSync = syncHtmlArtifactsToBoardDocument(doc, [measuredArtifact])
+    expect(firstSync.updatedFrameIds).toEqual([existing.id])
+    expect(firstSync.document.objects[existing.id]).toMatchObject({
+      width: 1852,
+      height: 2903
+    })
+
+    // Re-run sync again (as happens whenever any other artifact's node changes)
+    // against the now-updated document. The already-measured frame must stay put.
+    const secondSync = syncHtmlArtifactsToBoardDocument(firstSync.document, [measuredArtifact])
+    expect(secondSync.updatedFrameIds).toEqual([])
+    expect(secondSync.document.objects[existing.id]).toMatchObject({
+      width: 1852,
+      height: 2903
+    })
+  })
+
   it('does not let artifact node geometry overwrite an existing linked frame', () => {
     const doc = createEmptyDocument()
     const root = doc.objects[doc.rootId]
