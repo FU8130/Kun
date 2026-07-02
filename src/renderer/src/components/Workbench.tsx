@@ -75,7 +75,7 @@ import { runDesignPages } from '../design/design-pages-run'
 import { prepareDesignPreviewFile } from '../design/design-preview-file'
 import { buildImplementDesignPrompt } from '../design/design-implement-prompt'
 import { createDesignArtifactId, type DesignArtifact } from '../design/design-types'
-import { formatDesignSystemMarkdown, hashDesignSystem } from '../design/design-context'
+import { formatDesignSystemMarkdown, hashDesignSystem, mergeDesignContextWithTokens } from '../design/design-context'
 import { canImplementDesignArtifact } from '../design/design-artifact-actions'
 import { isHtmlFrame, type CanvasShape } from '../design/canvas/canvas-types'
 import {
@@ -1963,7 +1963,9 @@ export function Workbench(): ReactElement {
         htmlElementContext,
         workspaceRoot: designWorkspaceRoot,
         customPrompt: promptState.generationPrompt || undefined,
-        designContext: promptState.designContext,
+        // Fill an unset brand color / font from the realized design tokens so an
+        // unconfigured session still matches what's already on screen.
+        designContext: mergeDesignContextWithTokens(promptState.designContext, derivedTokens),
         ...(contextLocations.length > 0 ? { contextLocations } : {}),
         ...(canvasSnapshot ? { canvasSnapshot } : {}),
         ...(target === 'canvas' ? { previousOpErrors: takeLastCanvasOpErrors() } : {}),

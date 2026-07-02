@@ -169,6 +169,47 @@ export function formatDesignSystemMarkdown(ctx: DesignContext | undefined): stri
 }
 
 /**
+ * Map a CSS font-family (or stack) to a DesignContext font style bucket. Matches
+ * the FIRST family name and checks specific faces before the generic `serif`
+ * fallback (which is stripped of `sans-serif` first, so `Inter, sans-serif` reads
+ * as geometric, not serif).
+ */
+function fontStyleFromFamily(family: string | undefined): DesignContext['fontStyle'] | undefined {
+  const first = (family ?? '').toLowerCase().split(',')[0].trim()
+  if (!first) return undefined
+  if (/mono|consolas|menlo|courier|jetbrains|fira code|source code/.test(first)) return 'mono'
+  if (/inter|geist|poppins|futura|montserrat|circular|sf pro|manrope|space grotesk/.test(first)) return 'geometric'
+  if (/segoe|roboto|open sans|lato|source sans|helvetica|noto sans|pt sans/.test(first)) return 'humanist'
+  if (/system-ui|-apple-system|ui-sans|ui-serif/.test(first)) return 'system'
+  const serifProbe = first.replace(/sans[-\s]?serif/g, '')
+  if (/serif|georgia|times|charter|garamond|playfair|merriweather|lora/.test(serifProbe)) return 'serif'
+  return undefined
+}
+
+/**
+ * Enrich an unset DesignContext with values inferred from the design's actually
+ * extracted tokens: an empty brand color falls back to the realized accent, an
+ * empty font style to the realized font family. NEVER overrides an explicit user
+ * choice — only fills blanks — so first-turn / unconfigured sessions still match
+ * the look already on screen instead of running on defaults.
+ */
+export function mergeDesignContextWithTokens(
+  ctx: DesignContext | undefined,
+  tokens: { palette: { primary?: { base: string } }; typeRows: { fontFamily: string }[] } | undefined
+): DesignContext | undefined {
+  if (!tokens) return ctx
+  const merged: DesignContext = { ...(ctx ?? {}) }
+  if (!merged.brandColor && tokens.palette.primary?.base) {
+    merged.brandColor = tokens.palette.primary.base
+  }
+  if (!merged.fontStyle) {
+    const inferred = fontStyleFromFamily(tokens.typeRows.find((row) => row.fontFamily)?.fontFamily)
+    if (inferred) merged.fontStyle = inferred
+  }
+  return Object.keys(merged).length > 0 ? merged : ctx
+}
+
+/**
  * Stable content hash of a published DESIGN_SYSTEM.md body. Lets design mode
  * detect when the shared design system has drifted from what an artifact was
  * implemented against (the code side of bidirectional design↔code drift).
