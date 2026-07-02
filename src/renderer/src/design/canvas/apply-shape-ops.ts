@@ -1,6 +1,24 @@
 import { executeOps, type OpError } from './shape-ops'
 
 /**
+ * Last turn's canvas-op errors, stashed by the apply hook and taken by the next
+ * canvas turn so the agent SEES what failed (bad shape id, schema-invalid op,
+ * missing parent) and self-corrects — instead of the op silently vanishing with
+ * the agent believing it succeeded. One-shot: `take` reads and clears.
+ */
+let _lastCanvasOpErrors: OpError[] = []
+
+export function setLastCanvasOpErrors(errors: OpError[]): void {
+  _lastCanvasOpErrors = errors
+}
+
+export function takeLastCanvasOpErrors(): OpError[] {
+  const errors = _lastCanvasOpErrors
+  _lastCanvasOpErrors = []
+  return errors
+}
+
+/**
  * Extract every `shapeops` fenced code block from a markdown-ish string.
  * Tolerates leading/trailing whitespace inside the fence and json/array shapes.
  */

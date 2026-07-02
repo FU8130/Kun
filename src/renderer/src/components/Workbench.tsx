@@ -93,6 +93,7 @@ import {
 } from '../design/design-composer-context'
 import type { DesignHtmlElementContext } from '../design/design-composer-context'
 import type { ScreenTurnOptions, ScreenManifestEntry } from '../design/design-turn-prompt'
+import { takeLastCanvasOpErrors } from '../design/canvas/apply-shape-ops'
 import { SddAssistantPanel } from './sdd/SddAssistantPanel'
 import { SddDraftEditorView } from './sdd/SddDraftEditorView'
 import { SidebarTitlebarToggleButton } from './sidebar/SidebarPrimitives'
@@ -1936,6 +1937,7 @@ export function Workbench(): ReactElement {
         designContext: promptState.designContext,
         ...(contextLocations.length > 0 ? { contextLocations } : {}),
         ...(canvasSnapshot ? { canvasSnapshot } : {}),
+        ...(target === 'canvas' ? { previousOpErrors: takeLastCanvasOpErrors() } : {}),
         ...(htmlSiblingManifest.length > 0 ? { screenManifest: htmlSiblingManifest } : {}),
         ...(target === 'screen' && selectedFrame ? {
           screenName: selectedFrame.name,

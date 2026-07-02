@@ -2,6 +2,7 @@ import { WRITE_PROTOTYPE_DEFAULT_PROMPT, WRITE_PROTOTYPE_MAX_TEXT_CHARS } from '
 import { DESIGN_CRAFT_LINES, formatDesignContextLines, type DesignContext } from './design-context'
 import type { CanvasSnapshot } from './canvas/canvas-snapshot'
 import { snapshotToCompactJson } from './canvas/canvas-snapshot'
+import type { OpError } from './canvas/shape-ops'
 import type { DesignContextLocation, DesignHtmlElementContext } from './design-composer-context'
 
 export type DesignTurnTarget = 'html' | 'canvas' | 'screen'
@@ -38,6 +39,12 @@ export type DesignTurnOptions = {
    * instead of us bloating the turn with full HTML/JSON.
    */
   contextLocations?: DesignContextLocation[]
+  /**
+   * Errors from the PREVIOUS canvas turn's ops (bad shape id, schema-invalid op,
+   * missing parent) so the agent can self-correct. Rendered near the top of the
+   * canvas prompt; the apply hook stashes them and the next canvas turn takes them.
+   */
+  previousOpErrors?: OpError[]
 }
 
 /**
@@ -305,9 +312,22 @@ function deriveSelectedImageEditHint(
   return null
 }
 
+function formatPreviousOpErrorLines(errors: OpError[] | undefined): string[] {
+  if (!errors || errors.length === 0) return []
+  const rows = errors
+    .slice(0, 8)
+    .map((e) => `- [${e.code}] ${e.message}${e.suggestion ? ` — ${e.suggestion}` : ''}`)
+  return [
+    'YOUR PREVIOUS canvas attempt had errors — these ops did NOT apply (they silently failed). Re-read the current snapshot below and reissue CORRECTED ops: target real shape ids, give parents that exist, and use full fill/stroke objects.',
+    ...rows,
+    ''
+  ]
+}
+
 function buildCanvasTurnPrompt(options: DesignTurnOptions): string {
   const snapshot = options.canvasSnapshot
   const snapshotJson = snapshot ? snapshotToCompactJson(snapshot) : '(empty canvas)'
+  const errorLines = formatPreviousOpErrorLines(options.previousOpErrors)
   const editHint = deriveSelectedImageEditHint(snapshot)
   const editHintLines = editHint
     ? [
@@ -319,6 +339,7 @@ function buildCanvasTurnPrompt(options: DesignTurnOptions): string {
     'Kun is asking you to operate the design canvas by calling the `design_canvas` tool.',
     `Workspace: ${options.workspaceRoot}`,
     '',
+    ...errorLines,
     ...editHintLines,
     'How to respond:',
     '- Reply with a short plain-text plan (1-3 sentences) describing what you will do.',

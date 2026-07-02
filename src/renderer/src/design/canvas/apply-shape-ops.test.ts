@@ -4,7 +4,9 @@ import {
   extractShapeOpsBlocks,
   extractCanvasOpBlocks,
   applyCanvasOpsSince,
-  applyShapeOpsFromText
+  applyShapeOpsFromText,
+  setLastCanvasOpErrors,
+  takeLastCanvasOpErrors
 } from './apply-shape-ops'
 import { useCanvasShapeStore } from './canvas-shape-store'
 import { useCanvasUndoStore } from './canvas-undo-store'
@@ -17,6 +19,15 @@ beforeEach(() => {
   useCanvasUndoStore.getState().clear()
   useCanvasSelectionStore.getState().clearSelection()
   setScreenArtifactFactory(() => null)
+  takeLastCanvasOpErrors() // clear any cross-test leakage
+})
+
+describe('last-canvas-op-errors stash (agent self-correction bridge)', () => {
+  it('is a one-shot: take returns the stashed errors then clears', () => {
+    setLastCanvasOpErrors([{ code: 'SHAPE_NOT_FOUND', message: 'No shape "x"' }])
+    expect(takeLastCanvasOpErrors()).toEqual([{ code: 'SHAPE_NOT_FOUND', message: 'No shape "x"' }])
+    expect(takeLastCanvasOpErrors()).toEqual([])
+  })
 })
 
 describe('extractShapeOpsBlocks', () => {

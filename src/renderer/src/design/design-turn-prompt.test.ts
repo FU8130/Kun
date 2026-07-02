@@ -224,6 +224,22 @@ describe('design turn prompt', () => {
     expect(prompt).not.toContain('IMPORTANT PRIOR')
   })
 
+  it('renders previous canvas-op errors so the agent can self-correct', () => {
+    const prompt = buildDesignTurnPrompt({
+      target: 'canvas',
+      mode: 'text',
+      text: 'try again',
+      artifactRelativePath: '.kun-design/board/canvas.json',
+      workspaceRoot: '/workspace',
+      previousOpErrors: [
+        { code: 'SHAPE_NOT_FOUND', message: 'No shape with id "ghost"', suggestion: 'Available shapes: "Card" (s_1)' }
+      ]
+    })
+    expect(prompt).toContain('YOUR PREVIOUS canvas attempt had errors')
+    expect(prompt).toContain('No shape with id "ghost"')
+    expect(prompt).toContain('Available shapes: "Card" (s_1)')
+  })
+
   it('canvas turn prompt frames screen creation as a design_canvas tool call', () => {
     const prompt = buildCodeCanvasTurnPrompt({ workspaceRoot: '/ws' })
     expect(prompt).toContain('calling the `design_canvas` tool')

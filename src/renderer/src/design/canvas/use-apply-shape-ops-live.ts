@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react'
 import { useChatStore } from '../../store/chat-store'
 import { collectAssistantTextForTurn } from '../../store/chat-store-runtime-helpers'
-import { applyCanvasOpsSince } from './apply-shape-ops'
+import { applyCanvasOpsSince, setLastCanvasOpErrors } from './apply-shape-ops'
 import { useCanvasSelectionStore } from './canvas-selection-store'
 import { useCanvasShapeStore } from './canvas-shape-store'
 import { takeScreenBrief } from './screen-artifact-bridge'
+import type { OpError } from './shape-ops'
 import { isHtmlFrame } from './canvas-types'
 import { useDesignAssistantStore } from '../design-assistant-store'
 
@@ -42,6 +43,7 @@ export function useApplyShapeOpsLive(
     // across deltas without triggering React re-renders on every token.
     let appliedCount = 0
     const affectedThisTurn = new Set<string>()
+    const errorsThisTurn: OpError[] = []
     let framedThisTurn = false
     let lastRunAt = 0
     let trailingTimer: ReturnType<typeof setTimeout> | null = null
@@ -49,6 +51,7 @@ export function useApplyShapeOpsLive(
     const resetTurn = (): void => {
       appliedCount = 0
       affectedThisTurn.clear()
+      errorsThisTurn.length = 0
       framedThisTurn = false
     }
 
@@ -73,9 +76,12 @@ export function useApplyShapeOpsLive(
     // `frameOnFirst` gently brings the build area into view exactly once per turn
     // (the first batch), then leaves the camera alone so the live build is smooth.
     const applyFrom = (text: string, frameOnFirst: boolean): void => {
-      const { affectedIds, totalBlocks } = applyCanvasOpsSince(text, appliedCount)
+      const { affectedIds, errors, totalBlocks } = applyCanvasOpsSince(text, appliedCount)
       if (totalBlocks <= appliedCount) return
       appliedCount = totalBlocks
+      // Capture errors even when nothing applied — an all-failed block has errors
+      // but no affected ids, and that's exactly what the agent must learn about.
+      if (errors.length > 0) errorsThisTurn.push(...errors)
       if (affectedIds.length === 0) return
       for (const id of affectedIds) affectedThisTurn.add(id)
       useCanvasSelectionStore.getState().select([...affectedThisTurn])
@@ -147,6 +153,9 @@ export function useApplyShapeOpsLive(
           }
         }
       }
+      // Hand this turn's op errors to the next canvas turn so the agent can fix
+      // them. Always set (even []) so a clean turn clears stale errors.
+      setLastCanvasOpErrors([...errorsThisTurn])
       resetTurn()
     }
 
