@@ -64,6 +64,9 @@ describe('runtime-sse-ipc', () => {
             if (chunk === '__ERROR__') {
               throw new Error('Network Disruption')
             }
+            if (chunk === '__TERMINATED__') {
+              throw new Error('terminated')
+            }
             return { done: false, value: enc.encode(chunk) }
           }
         }
@@ -166,5 +169,64 @@ describe('runtime-sse-ipc', () => {
     expect(allEvents[1].text).toBe('world')
     expect(allEvents[2].seq).toBe(3)
     expect(allEvents[2].text).toBe('bye')
+  })
+
+  it('treats terminated stream reads as reconnectable SSE disconnects', async () => {
+    registerRuntimeSseIpc({
+      ipcMain: mockIpcMain,
+      store: mockStore,
+      ensureRuntime: mockEnsureRuntime,
+      logError: mockLogError
+    })
+
+    const startHandler = handlers.get('runtime:sse:start')
+    expect(startHandler).toBeDefined()
+
+    const stream1 = mockReadableStream([
+      'id: 7\ndata: {"text": "partial"}\n\n',
+      '__TERMINATED__'
+    ])
+    const stream2 = mockReadableStream([
+      'id: 8\ndata: {"text": "final"}\n\n'
+    ])
+
+    mockFetch.mockImplementation(async () => {
+      const callCount = mockFetch.mock.calls.length
+      if (callCount === 1) {
+        return { ok: true, status: 200, body: stream1 }
+      }
+      if (callCount === 2) {
+        return { ok: true, status: 200, body: stream2 }
+      }
+      return { ok: false, status: 400 }
+    })
+
+    const startRes = await startHandler!(mockEvent, {
+      threadId: 'thread-terminated',
+      sinceSeq: 0
+    })
+
+    await vi.advanceTimersByTimeAsync(750)
+
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+    expect(mockFetch.mock.calls[1][0].toString()).toContain('since_seq=7')
+    expect(mockEvent.sender.send).not.toHaveBeenCalledWith(
+      'runtime:sse-error',
+      expect.objectContaining({ streamId: startRes.streamId, message: 'terminated' })
+    )
+    expect(mockLogError).not.toHaveBeenCalledWith(
+      'sse',
+      expect.stringContaining('SSE stream error'),
+      expect.objectContaining({ message: 'terminated' })
+    )
+
+    const stopHandler = handlers.get('runtime:sse:stop')
+    expect(stopHandler).toBeDefined()
+    await stopHandler!(mockEvent, startRes.streamId)
+
+    const allEvents = mockEvent.sender.send.mock.calls
+      .filter((call: any) => call[0] === 'runtime:sse-event')
+      .flatMap((call: any) => call[1].events)
+    expect(allEvents.map((event: any) => event.seq)).toEqual([7, 8])
   })
 })

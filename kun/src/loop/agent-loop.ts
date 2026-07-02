@@ -64,8 +64,9 @@ import { modelCapabilitiesForModel, type ContextCompactionConfig } from './model
 import type { SkillRuntime } from '../skills/skill-runtime.js'
 import type { AttachmentContent, AttachmentStore } from '../attachments/attachment-store.js'
 import { detectImage } from '../attachments/attachment-store.js'
-import type { ModelInputAttachment, ModelTextAttachmentFallback } from '../ports/model-client.js'
+import type { ModelDocumentAttachment, ModelInputAttachment, ModelTextAttachmentFallback } from '../ports/model-client.js'
 import type { MemoryStore } from '../memory/memory-store.js'
+import type { ArtifactStore } from '../artifacts/artifact-store.js'
 import {
   hasHooksForPhase,
   runObserverHooks,
@@ -99,6 +100,7 @@ import { GET_GOAL_TOOL_NAME, UPDATE_GOAL_TOOL_NAME } from '../adapters/tool/goal
 import { TODO_LIST_TOOL_NAME, TODO_WRITE_TOOL_NAME } from '../adapters/tool/todo-tools.js'
 import { shellRuntimeInstruction } from '../adapters/tool/builtin-tool-utils.js'
 import { VERIFY_CHANGES_TOOL_NAME } from '../adapters/tool/builtin-verify-tool.js'
+import { buildToolPreferenceInstruction } from '../prompt/kun-system-prompt.js'
 import {
   GoalResumeCoordinator,
   DEFAULT_MAX_GOAL_RESUME_NO_PROGRESS_ATTEMPTS,
@@ -680,6 +682,7 @@ export type AgentLoopOptions = {
   skillRuntime?: SkillRuntime
   attachmentStore?: AttachmentStore
   memoryStore?: MemoryStore
+  artifactStore?: ArtifactStore
   /** Kun runtime data root for sandbox-safe background shell output reads. */
   runtimeDataDir?: string
   tokenEconomy?: TokenEconomyConfig
@@ -1553,6 +1556,7 @@ export class AgentLoop {
           nowIso: this.opts.nowIso()
         })
       : null
+    const toolPreferenceInstruction = buildToolPreferenceInstruction(tools)
     const contextInstructions = [
       ...(runtimeContextInstruction ? [runtimeContextInstruction] : []),
       ...(activeGoalInstruction ? [activeGoalInstruction] : []),
@@ -1573,6 +1577,7 @@ export class AgentLoop {
       ...(skillResolution.catalogInstruction ? [skillResolution.catalogInstruction] : []),
       ...skillResolution.instructions,
       ...(userInputDisabled ? [userInputUnavailableInstruction()] : []),
+      ...(toolPreferenceInstruction ? [toolPreferenceInstruction] : []),
       ...(effectiveToolSpecs.some((tool) => tool.name === 'bash') ? [shellRuntimeInstruction()] : []),
       ...(suggestVerification ? [verificationSuggestionInstruction()] : []),
       ...(toolCatalogDriftMessage ? [toolCatalogDriftMessage] : [])
@@ -1602,6 +1607,7 @@ export class AgentLoop {
       history: capToolResultImages(forwardHistory, MAX_FORWARDED_TOOL_IMAGES),
       ...(attachments.imageAttachments.length ? { attachments: attachments.imageAttachments } : {}),
       ...(attachments.textFallbacks.length ? { attachmentTextFallbacks: attachments.textFallbacks } : {}),
+      ...(attachments.documents.length ? { attachmentDocuments: attachments.documents } : {}),
       tools: effectiveToolSpecs,
       ...(requiredToolName ? { requiredToolName } : {}),
       ...(modelRoute.reasoningEffort ? { reasoningEffort: modelRoute.reasoningEffort } : {}),
@@ -1683,6 +1689,7 @@ export class AgentLoop {
         attachmentIds: turn?.attachmentIds ?? [],
         imageAttachments: attachments.imageAttachments,
         textFallbacks: attachments.textFallbacks,
+        documents: attachments.documents,
         modelCapabilities
       })
     })
@@ -2276,6 +2283,7 @@ export class AgentLoop {
       approvalPolicy: input.approvalPolicy,
       sandboxMode: input.sandboxMode,
       ...(this.opts.runtimeDataDir ? { runtimeDataDir: this.opts.runtimeDataDir } : {}),
+      ...(this.opts.artifactStore ? { artifactStore: this.opts.artifactStore } : {}),
       abortSignal: input.signal,
       awaitApproval: async (approval) => {
         await this.opts.events.record({
@@ -3021,8 +3029,8 @@ export class AgentLoop {
     threadId: string
     workspace: string
     modelCapabilities: ModelCapabilityMetadata
-  }): Promise<{ imageAttachments: ModelInputAttachment[]; textFallbacks: ModelTextAttachmentFallback[] }> {
-    if (input.attachmentIds.length === 0) return { imageAttachments: [], textFallbacks: [] }
+  }): Promise<{ imageAttachments: ModelInputAttachment[]; textFallbacks: ModelTextAttachmentFallback[]; documents: ModelDocumentAttachment[] }> {
+    if (input.attachmentIds.length === 0) return { imageAttachments: [], textFallbacks: [], documents: [] }
     if (!this.opts.attachmentStore) {
       throw new Error('attachment store is unavailable')
     }
@@ -3030,11 +3038,30 @@ export class AgentLoop {
     const textFallbackPolicy = this.opts.attachmentStore.textFallbackPolicy()
     const imageAttachments: ModelInputAttachment[] = []
     const textFallbacks: ModelTextAttachmentFallback[] = []
+    const documents: ModelDocumentAttachment[] = []
+    let remainingDocumentChars = 400_000
     for (const id of input.attachmentIds) {
       const attachment = await this.opts.attachmentStore.resolveContent(id, {
         threadId: input.threadId,
         workspace: input.workspace
       })
+      if (attachment.kind === 'document') {
+        const fullText = attachment.documentText ?? ''
+        const text = fullText.slice(0, Math.max(0, remainingDocumentChars))
+        remainingDocumentChars -= text.length
+        documents.push({
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          text,
+          byteSize: attachment.byteSize,
+          ...(attachment.pageCount ? { pageCount: attachment.pageCount } : {}),
+          ...(attachment.truncated || text.length < fullText.length ? { truncated: true } : {}),
+          ...(attachment.localFilePath ? { localFilePath: attachment.localFilePath } : {})
+        })
+        if (remainingDocumentChars <= 0) break
+        continue
+      }
       if (supportsImageInput) {
         imageAttachments.push({
           id: attachment.id,
@@ -3052,7 +3079,7 @@ export class AgentLoop {
         textFallbackPolicy.textFallbackMaxBase64Bytes
       ))
     }
-    return { imageAttachments, textFallbacks }
+    return { imageAttachments, textFallbacks, documents }
   }
 
   /**
@@ -3179,12 +3206,15 @@ function attachmentRequestPipelineDetails(input: {
   attachmentIds: readonly string[]
   imageAttachments: readonly ModelInputAttachment[]
   textFallbacks: readonly ModelTextAttachmentFallback[]
+  documents?: readonly ModelDocumentAttachment[]
   modelCapabilities: ModelCapabilityMetadata
 }): Record<string, unknown> {
+  const documents = input.documents ?? []
   if (
     input.attachmentIds.length === 0 &&
     input.imageAttachments.length === 0 &&
-    input.textFallbacks.length === 0
+    input.textFallbacks.length === 0 &&
+    documents.length === 0
   ) {
     return {}
   }
@@ -3203,7 +3233,10 @@ function attachmentRequestPipelineDetails(input: {
       (total, attachment) => total + Buffer.byteLength(attachment.dataBase64, 'utf8'),
       0
     ),
-    textFallbackMimeTypes: [...new Set(input.textFallbacks.map((attachment) => attachment.mimeType))]
+    textFallbackMimeTypes: [...new Set(input.textFallbacks.map((attachment) => attachment.mimeType))],
+    documentCount: documents.length,
+    documentTextChars: documents.reduce((total, document) => total + document.text.length, 0),
+    documentMimeTypes: [...new Set(documents.map((document) => document.mimeType))]
   }
 }
 

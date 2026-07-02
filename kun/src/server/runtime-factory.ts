@@ -17,6 +17,9 @@ import { buildGoalLocalTools } from '../adapters/tool/goal-tools.js'
 import { buildTodoLocalTools } from '../adapters/tool/todo-tools.js'
 import { buildDesignCanvasLocalTools } from '../adapters/tool/design-canvas-tool.js'
 import { LocalToolHost, buildDefaultLocalTools } from '../adapters/tool/local-tool-host.js'
+import { createReadArtifactTool } from '../adapters/tool/artifact-tool.js'
+import { FileArtifactStore } from '../artifacts/artifact-store.js'
+import { createTaskGraphTool } from '../adapters/tool/task-graph-tool.js'
 import { buildMcpToolProviders } from '../adapters/tool/mcp-tool-provider.js'
 import { buildMemoryToolProviders } from '../adapters/tool/memory-tool-provider.js'
 import { buildSkillToolProviders } from '../adapters/tool/skill-tool-provider.js'
@@ -82,6 +85,7 @@ import { createChildAgentExecutor } from '../delegation/child-agent-executor.js'
 import { BackgroundShellRuntime } from '../services/background-shell-runtime.js'
 import { stopBashSessionById, createBashLocalTool } from '../adapters/tool/builtin-bash-tool.js'
 import { createBackgroundShellTool } from '../adapters/tool/background-shell-tool.js'
+import { createSecretEncryptor, defaultSecretCommandRunner } from '../security/secret-store.js'
 import type { LocalTool } from '../adapters/tool/local-tool-host.js'
 
 export type KunServeRuntimeOptions = {
@@ -175,6 +179,7 @@ export async function createKunServeRuntime(
     ]
   })
   const threadService = new ThreadService({ threadStore, sessionStore, events, ids, nowIso })
+  const artifactStore = new FileArtifactStore(join(options.dataDir, 'artifacts'), nowIso)
   const modelProfiles = modelContextProfilesFromConfig({
     contextCompaction: options.contextCompaction,
     models: options.models
@@ -230,9 +235,21 @@ export async function createKunServeRuntime(
     default: defaultModelClient,
     providers: providerClients
   })
+  const hasMcpOAuth = Object.values(options.capabilities?.mcp?.servers ?? {}).some((server) =>
+    server.oauth?.enabled !== false && Boolean(server.oauth) && server.transport !== 'stdio'
+  )
+  const oauthEncryptor = hasMcpOAuth
+    ? (await createSecretEncryptor({
+        keyFilePath: join(options.dataDir, 'secret.key'),
+        run: defaultSecretCommandRunner
+      })).encryptor
+    : undefined
   // Independent I/O; all must still finish before the server listens.
   const [mcpProviders, skillRuntime] = await Promise.all([
-    buildMcpToolProviders(options.capabilities?.mcp),
+    buildMcpToolProviders(options.capabilities?.mcp, {
+      oauthStorageDir: join(options.dataDir, 'mcp-oauth'),
+      ...(oauthEncryptor ? { oauthEncryptor } : {})
+    }),
     SkillRuntime.create(options.capabilities?.skills),
     seedUsageCarryover({ threadStore, sessionStore, usageService })
   ])
@@ -320,6 +337,7 @@ export async function createKunServeRuntime(
     // `context.guiDesignCanvas`, so only design-canvas child turns see it.
     tools: buildDesignCanvasLocalTools()
   }
+  const taskGraphTool = createTaskGraphTool({ rootDir: join(options.dataDir, 'task-graphs') })
   const baseToolProviders = [
     {
       id: 'builtin',
@@ -327,6 +345,13 @@ export async function createKunServeRuntime(
       enabled: true,
       available: true,
       tools: withBackgroundShellTools(buildDefaultLocalTools())
+    },
+    {
+      id: 'artifacts',
+      kind: 'built-in' as const,
+      enabled: true,
+      available: true,
+      tools: [createReadArtifactTool()]
     },
     ...mcpProviders.providers,
     ...webProviders.providers,
@@ -379,6 +404,7 @@ export async function createKunServeRuntime(
           events,
           ...(options.runtime ? { runtime: options.runtime } : {}),
           ...(memoryStore ? { memoryStore } : {}),
+          artifactStore,
           nowIso
         }),
         recordExternalUsage: (threadId, usage) => {
@@ -459,6 +485,13 @@ export async function createKunServeRuntime(
       enabled: true,
       available: true,
       tools: buildTodoLocalTools(threadService)
+    },
+    {
+      id: 'planning',
+      kind: 'built-in' as const,
+      enabled: true,
+      available: true,
+      tools: [taskGraphTool]
     },
     ...buildDelegationToolProviders(delegationRuntime)
   ])
@@ -541,6 +574,7 @@ export async function createKunServeRuntime(
     ...(options.runtime?.toolArgumentRepair ? { toolArgumentRepair: options.runtime.toolArgumentRepair } : {}),
     ...(resolvedHooks.length ? { hooks: resolvedHooks } : {}),
     ...(attachmentStore ? { attachmentStore } : {}),
+    artifactStore,
     ...(memoryStore ? { memoryStore } : {}),
     runtimeDataDir: options.dataDir,
     onPlanWritten: async ({ threadId, planId, relativePath, markdown }) => {
@@ -619,6 +653,7 @@ export async function createKunServeRuntime(
     toolDiagnostics: async () => ({
       providers: registry.diagnostics(),
       mcpServers: mcpProviders.diagnostics,
+      mcpOAuth: mcpProviders.oauth,
       mcpSearch: mcpProviders.search,
       webProviders: webProviders.diagnostics,
       skills: skillRuntime.diagnostics(),
@@ -633,6 +668,9 @@ export async function createKunServeRuntime(
       musicGen: musicGenProviders.diagnostics,
       videoGen: videoGenProviders.diagnostics
     }),
+    mcpOAuth: async () => mcpProviders.oauth,
+    clearMcpOAuth: async (serverId) => mcpProviders.clearOAuthCredentials(serverId),
+    authorizeMcpOAuth: async (serverId) => mcpProviders.authorizeOAuth(serverId),
     skills: () => skillRuntime.diagnostics(),
     shutdown: async () => {
       try {

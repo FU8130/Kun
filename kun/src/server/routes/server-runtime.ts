@@ -11,7 +11,12 @@ import type { ToolHost, ToolProviderPolicy } from '../../ports/tool-host.js'
 import type { RuntimeEventRecorder } from '../../services/runtime-event-recorder.js'
 import type { LlmDebugRecorder } from '../../services/llm-debug-recorder.js'
 import type { RuntimeInfoResponse } from '../../contracts/runtime-info.js'
-import type { McpServerDiagnostic } from '../../adapters/tool/mcp-tool-provider.js'
+import type {
+  McpOAuthAuthorizeResult,
+  McpOAuthClearResult,
+  McpOAuthDiagnostic,
+  McpServerDiagnostic
+} from '../../adapters/tool/mcp-tool-provider.js'
 import type { McpSearchRuntimeDiagnostic } from '../../adapters/tool/mcp-tool-search.js'
 import type { WebProviderDiagnostic } from '../../adapters/tool/web-tool-provider.js'
 import type { ImageGenDiagnostic } from '../../adapters/tool/image-gen-tool-provider.js'
@@ -35,6 +40,7 @@ import type { ImmutablePrefix } from '../../cache/immutable-prefix.js'
 export type RuntimeToolDiagnostics = {
   providers: ToolProviderPolicy[]
   mcpServers: McpServerDiagnostic[]
+  mcpOAuth?: McpOAuthDiagnostic[]
   mcpSearch?: McpSearchRuntimeDiagnostic
   webProviders: WebProviderDiagnostic[]
   skills: SkillRuntimeDiagnostics
@@ -111,6 +117,9 @@ export type ServerRuntime = {
   nowIso: () => string
   info(): RuntimeInfoResponse
   toolDiagnostics?(): RuntimeToolDiagnostics | Promise<RuntimeToolDiagnostics>
+  mcpOAuth?(): McpOAuthDiagnostic[] | Promise<McpOAuthDiagnostic[]>
+  clearMcpOAuth?(serverId?: string): Promise<McpOAuthClearResult>
+  authorizeMcpOAuth?(serverId: string): Promise<McpOAuthAuthorizeResult>
   skills?(): SkillRuntimeDiagnostics | Promise<SkillRuntimeDiagnostics>
   shutdown?(): Promise<void>
 }

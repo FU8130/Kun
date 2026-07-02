@@ -17,7 +17,37 @@ type GitCheckpointMetadata = {
   currentBranch: string | null
   createdAt: string
   untrackedFiles: string[]
+  /** Untracked files deliberately NOT snapshotted (too large / over budget). */
+  skippedUntracked?: string[]
+  /**
+   * Whether the snapshot captured every untracked file. `partial` means some
+   * untracked files were skipped (see `skippedUntracked`); restoring a partial
+   * checkpoint can destroy those never-captured files, so restore refuses a
+   * partial checkpoint unless the caller explicitly opts in.
+   */
+  completeness?: 'complete' | 'partial'
 }
+
+/**
+ * Snapshot policy that bounds checkpoint disk usage (issue #651). Untracked
+ * files are physically copied, so a workspace full of large untracked artifacts
+ * (AI models, node_modules, build output) could balloon the checkpoint store by
+ * gigabytes per message. These caps + the per-thread retention limit stop that.
+ */
+export type GitCheckpointStorageOptions = {
+  /** Override the checkpoints root (e.g. point it at another drive). */
+  checkpointsRoot?: string
+  /** Skip snapshotting any single untracked file larger than this. Default 5 MiB. */
+  maxUntrackedFileBytes?: number
+  /** Stop snapshotting untracked files once this cumulative size is reached. Default 50 MiB. */
+  maxUntrackedTotalBytes?: number
+  /** Keep at most this many checkpoints per thread (newest first). Default 5. */
+  maxPerThread?: number
+}
+
+const DEFAULT_MAX_UNTRACKED_FILE_BYTES = 5 * 1_024 * 1_024
+const DEFAULT_MAX_UNTRACKED_TOTAL_BYTES = 50 * 1_024 * 1_024
+const DEFAULT_MAX_CHECKPOINTS_PER_THREAD = 5
 
 export type GitCheckpointCleanupResult = {
   scanned: number
@@ -56,24 +86,38 @@ function restoreFailure(error: unknown): Extract<GitCheckpointRestoreResult, { o
   return { ...failure, reason: failure.reason }
 }
 
-function checkpointDir(dataDir: string, checkpointId: string): string {
-  return join(resolve(dataDir), 'git-checkpoints', checkpointId)
-}
-
-function checkpointRootDir(dataDir: string): string {
+/**
+ * Resolve the checkpoints root directory. A user-configured absolute path (e.g.
+ * on another drive with more free space) takes precedence; otherwise the
+ * default lives under the Kun data dir. Relative configured paths are resolved
+ * against the data dir so a stray relative value can't escape unexpectedly.
+ */
+export function resolveCheckpointsRoot(dataDir: string, configured?: string): string {
+  const trimmed = configured?.trim()
+  if (trimmed) {
+    return isAbsolute(trimmed) ? resolve(trimmed) : resolve(dataDir, trimmed)
+  }
   return join(resolve(dataDir), 'git-checkpoints')
 }
 
-function checkpointCleanupStatePath(dataDir: string): string {
-  return join(checkpointRootDir(dataDir), CHECKPOINT_CLEANUP_STATE_FILE)
+function checkpointDir(root: string, checkpointId: string): string {
+  return join(root, checkpointId)
 }
 
-function checkpointHeadBundlePath(dataDir: string, checkpointId: string): string {
-  return join(checkpointDir(dataDir, checkpointId), 'head.bundle')
+function checkpointRootDir(root: string): string {
+  return root
 }
 
-function metadataPath(dataDir: string, checkpointId: string): string {
-  return join(checkpointDir(dataDir, checkpointId), 'metadata.json')
+function checkpointCleanupStatePath(root: string): string {
+  return join(root, CHECKPOINT_CLEANUP_STATE_FILE)
+}
+
+function checkpointHeadBundlePath(root: string, checkpointId: string): string {
+  return join(checkpointDir(root, checkpointId), 'head.bundle')
+}
+
+function metadataPath(root: string, checkpointId: string): string {
+  return join(checkpointDir(root, checkpointId), 'metadata.json')
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -97,9 +141,9 @@ async function assertNoUnmerged(repositoryRoot: string): Promise<void> {
   }
 }
 
-async function readMetadata(dataDir: string, checkpointId: string): Promise<GitCheckpointMetadata | null> {
+async function readMetadata(root: string, checkpointId: string): Promise<GitCheckpointMetadata | null> {
   try {
-    const raw = await readFile(metadataPath(dataDir, checkpointId), 'utf-8')
+    const raw = await readFile(metadataPath(root, checkpointId), 'utf-8')
     return JSON.parse(raw) as GitCheckpointMetadata
   } catch {
     return null
@@ -133,13 +177,13 @@ async function writeHeadBundle(repositoryRoot: string, path: string): Promise<vo
 
 async function resolveCheckpointTarget(
   repositoryRoot: string,
-  dataDir: string,
+  root: string,
   metadata: GitCheckpointMetadata
 ): Promise<string> {
   const head = metadata.head.trim()
   if (await commitExists(repositoryRoot, head)) return head
 
-  const bundlePath = checkpointHeadBundlePath(dataDir, metadata.checkpointId)
+  const bundlePath = checkpointHeadBundlePath(root, metadata.checkpointId)
   if (await fileExists(bundlePath)) {
     await runGit(repositoryRoot, ['bundle', 'unbundle', bundlePath], 30_000)
     if (await commitExists(repositoryRoot, head)) return head
@@ -329,9 +373,9 @@ async function collectReferencedCheckpointIds(dataDir: string): Promise<Set<stri
   return referenced
 }
 
-async function readCleanupState(dataDir: string): Promise<GitCheckpointCleanupState> {
+async function readCleanupState(root: string): Promise<GitCheckpointCleanupState> {
   try {
-    const raw = await readFile(checkpointCleanupStatePath(dataDir), 'utf-8')
+    const raw = await readFile(checkpointCleanupStatePath(root), 'utf-8')
     const parsed = JSON.parse(raw) as GitCheckpointCleanupState
     return typeof parsed === 'object' && parsed !== null ? parsed : {}
   } catch {
@@ -339,10 +383,9 @@ async function readCleanupState(dataDir: string): Promise<GitCheckpointCleanupSt
   }
 }
 
-async function writeCleanupState(dataDir: string, state: GitCheckpointCleanupState): Promise<void> {
-  const root = checkpointRootDir(dataDir)
+async function writeCleanupState(root: string, state: GitCheckpointCleanupState): Promise<void> {
   await mkdir(root, { recursive: true })
-  await writeFile(checkpointCleanupStatePath(dataDir), JSON.stringify(state, null, 2), 'utf-8')
+  await writeFile(checkpointCleanupStatePath(root), JSON.stringify(state, null, 2), 'utf-8')
 }
 
 function isCheckpointCleanupDue(lastRunAt: string | undefined, intervalDays: number, now: Date): boolean {
@@ -362,12 +405,13 @@ const CHECKPOINT_CLEANUP_GRACE_MS = 10 * 60 * 1_000
 
 export async function cleanupUnusedGitCheckpoints(params: {
   dataDir: string
+  checkpointsRoot?: string
   graceMs?: number
   now?: Date
 }): Promise<GitCheckpointCleanupResult> {
   const graceMs = params.graceMs ?? CHECKPOINT_CLEANUP_GRACE_MS
   const nowMs = (params.now ?? new Date()).getTime()
-  const root = checkpointRootDir(params.dataDir)
+  const root = resolveCheckpointsRoot(params.dataDir, params.checkpointsRoot)
   const referenced = await collectReferencedCheckpointIds(params.dataDir)
   const result: GitCheckpointCleanupResult = {
     scanned: 0,
@@ -422,19 +466,26 @@ export async function cleanupUnusedGitCheckpoints(params: {
 
 export async function cleanupUnusedGitCheckpointsIfDue(params: {
   dataDir: string
+  checkpointsRoot?: string
   intervalDays: number
   now?: Date
   graceMs?: number
 }): Promise<GitCheckpointCleanupDueResult> {
   const now = params.now ?? new Date()
-  const state = await readCleanupState(params.dataDir)
+  const root = resolveCheckpointsRoot(params.dataDir, params.checkpointsRoot)
+  const state = await readCleanupState(root)
   const lastRunAt = typeof state.lastRunAt === 'string' ? state.lastRunAt : undefined
   if (!isCheckpointCleanupDue(lastRunAt, params.intervalDays, now)) {
     return { due: false, lastRunAt: lastRunAt ?? null }
   }
-  const result = await cleanupUnusedGitCheckpoints({ dataDir: params.dataDir, now, graceMs: params.graceMs })
+  const result = await cleanupUnusedGitCheckpoints({
+    dataDir: params.dataDir,
+    ...(params.checkpointsRoot ? { checkpointsRoot: params.checkpointsRoot } : {}),
+    now,
+    ...(params.graceMs !== undefined ? { graceMs: params.graceMs } : {})
+  })
   const nextLastRunAt = now.toISOString()
-  await writeCleanupState(params.dataDir, { lastRunAt: nextLastRunAt })
+  await writeCleanupState(root, { lastRunAt: nextLastRunAt })
   return { due: true, lastRunAt: nextLastRunAt, result }
 }
 
@@ -443,11 +494,16 @@ export async function createGitCheckpoint(params: {
   workspaceRoot: string
   threadId: string
   checkpointId?: string
+  storage?: GitCheckpointStorageOptions
 }): Promise<GitCheckpointCreateResult> {
   const workspaceRoot = params.workspaceRoot.trim()
   if (!workspaceRoot) {
     return { ok: false, reason: 'no_workspace', message: 'No working directory selected.' }
   }
+  const root = resolveCheckpointsRoot(params.dataDir, params.storage?.checkpointsRoot)
+  const maxFileBytes = params.storage?.maxUntrackedFileBytes ?? DEFAULT_MAX_UNTRACKED_FILE_BYTES
+  const maxTotalBytes = params.storage?.maxUntrackedTotalBytes ?? DEFAULT_MAX_UNTRACKED_TOTAL_BYTES
+  const maxPerThread = params.storage?.maxPerThread ?? DEFAULT_MAX_CHECKPOINTS_PER_THREAD
   try {
     const repositoryRoot = await resolveRepositoryRoot(workspaceRoot)
     if (!repositoryRoot) {
@@ -456,26 +512,47 @@ export async function createGitCheckpoint(params: {
     await assertNoUnmerged(repositoryRoot)
 
     const checkpointId = params.checkpointId?.trim() || `gcp_${Date.now()}_${randomUUID()}`
-    const dir = checkpointDir(params.dataDir, checkpointId)
+    const dir = checkpointDir(root, checkpointId)
     await rm(dir, { recursive: true, force: true })
     await mkdir(join(dir, 'untracked'), { recursive: true })
 
     const head = (await runGit(repositoryRoot, ['rev-parse', 'HEAD'])).stdout.trim()
-    await writeHeadBundle(repositoryRoot, checkpointHeadBundlePath(params.dataDir, checkpointId))
+    await writeHeadBundle(repositoryRoot, checkpointHeadBundlePath(root, checkpointId))
     const currentBranchRaw = (await runGit(repositoryRoot, ['branch', '--show-current'])).stdout.trim()
     const currentBranch = currentBranchRaw || null
-    const untrackedFiles = splitNul(
+    const candidateUntracked = splitNul(
       (await runGit(repositoryRoot, ['ls-files', '--others', '--exclude-standard', '-z'])).stdout
     )
 
     await writePatch(repositoryRoot, ['diff', '--binary'], join(dir, 'unstaged.patch'))
     await writePatch(repositoryRoot, ['diff', '--cached', '--binary'], join(dir, 'staged.patch'))
 
-    for (const relativePath of untrackedFiles) {
+    // Bounded untracked snapshot (issue #651): copying every untracked file in
+    // full each turn is what ballooned the store by GBs. Skip files over the
+    // per-file cap and stop once the cumulative budget is hit; record what was
+    // skipped so the model/user know the snapshot is partial.
+    const untrackedFiles: string[] = []
+    const skippedUntracked: string[] = []
+    let copiedBytes = 0
+    for (const relativePath of candidateUntracked) {
       const from = join(repositoryRoot, relativePath)
+      let size = 0
+      try {
+        const info = await stat(from)
+        if (info.isDirectory()) continue
+        size = info.size
+      } catch {
+        continue
+      }
+      if (size > maxFileBytes || copiedBytes + size > maxTotalBytes) {
+        skippedUntracked.push(relativePath)
+        continue
+      }
       const to = join(dir, 'untracked', relativePath)
       await mkdir(dirname(to), { recursive: true })
       await cp(from, to, { recursive: true, force: true, errorOnExist: false })
+      copiedBytes += size
+      untrackedFiles.push(relativePath)
     }
 
     const metadata: GitCheckpointMetadata = {
@@ -485,9 +562,13 @@ export async function createGitCheckpoint(params: {
       head,
       currentBranch,
       createdAt: new Date().toISOString(),
-      untrackedFiles
+      untrackedFiles,
+      ...(skippedUntracked.length ? { skippedUntracked } : {}),
+      completeness: skippedUntracked.length ? 'partial' : 'complete'
     }
     await writeFile(join(dir, 'metadata.json'), JSON.stringify(metadata, null, 2), 'utf-8')
+    // Bound per-thread retention so an active thread cannot grow unboundedly.
+    await pruneThreadCheckpoints(root, params.threadId, maxPerThread, checkpointId).catch(() => undefined)
     return { ok: true, checkpointId, repositoryRoot, head, currentBranch }
   } catch (error) {
     const failure = checkpointFailure(error)
@@ -498,9 +579,69 @@ export async function createGitCheckpoint(params: {
   }
 }
 
+/**
+ * Keep at most `max` checkpoints for a thread (issue #651, per-thread cap).
+ * Oldest checkpoints (by createdAt, falling back to the `gcp_<ts>_` name) are
+ * removed first; `keepId` (the just-created checkpoint) is always retained.
+ */
+export async function pruneThreadCheckpoints(
+  root: string,
+  threadId: string,
+  max: number,
+  keepId?: string
+): Promise<{ deleted: string[] }> {
+  if (max <= 0) return { deleted: [] }
+  let entries: Dirent<string>[]
+  try {
+    entries = await readdir(root, { withFileTypes: true })
+  } catch {
+    return { deleted: [] }
+  }
+  const owned: Array<{ id: string; order: number }> = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const metadata = await readMetadata(root, entry.name)
+    if (!metadata || metadata.threadId !== threadId) continue
+    const createdMs = Date.parse(metadata.createdAt)
+    const order = Number.isFinite(createdMs) ? createdMs : checkpointNameTimestamp(entry.name)
+    owned.push({ id: entry.name, order })
+  }
+  // Newest first; keep the first `max`, delete the rest (never the keepId).
+  owned.sort((a, b) => b.order - a.order)
+  const deleted: string[] = []
+  for (let i = 0; i < owned.length; i += 1) {
+    const { id } = owned[i]
+    if (i < max || id === keepId) continue
+    try {
+      await rm(checkpointDir(root, id), { recursive: true, force: true })
+      deleted.push(id)
+    } catch {
+      // best-effort
+    }
+  }
+  return { deleted }
+}
+
+/** Extract the `gcp_<timestamp>_<uuid>` creation epoch for ordering fallback. */
+function checkpointNameTimestamp(name: string): number {
+  const match = name.match(/^gcp_(\d+)_/)
+  return match ? Number(match[1]) : 0
+}
+
 export async function restoreGitCheckpoint(params: {
   dataDir: string
   checkpointId: string
+  storage?: GitCheckpointStorageOptions
+  /**
+   * Opt-in to restoring a PARTIAL checkpoint (one whose snapshot skipped some
+   * untracked files because they were over the size budget). A partial restore
+   * runs `git clean -fd`, which deletes those never-captured files; without this
+   * flag the restore is refused so the user does not silently lose data. When
+   * enabled, a complete rescue checkpoint is taken first so the cleaned files
+   * remain recoverable. The restore still fails closed when the configured
+   * checkpoint budget cannot capture that rescue.
+   */
+  allowPartialRestore?: boolean
   /**
    * Optional runtime bridge used to verify that no thread is mid-turn before
    * running the destructive `git reset --hard` / `git clean -fd`. When omitted
@@ -511,14 +652,32 @@ export async function restoreGitCheckpoint(params: {
   runtimeRequest?: (path: string, init: { method?: string; body?: string }) => Promise<{ ok: boolean; status: number; body: string }>
 }): Promise<GitCheckpointRestoreResult> {
   const checkpointId = params.checkpointId.trim()
-  const metadata = await readMetadata(params.dataDir, checkpointId)
+  const root = resolveCheckpointsRoot(params.dataDir, params.storage?.checkpointsRoot)
+  const metadata = await readMetadata(root, checkpointId)
   if (!metadata) {
     return { ok: false, reason: 'not_found', message: `Git checkpoint not found: ${checkpointId}` }
   }
+
+  // Partial-checkpoint data-loss guard (P0-01). If the snapshot skipped any
+  // untracked file, the upcoming `git clean -fd` would delete those files with
+  // no snapshot to restore them. Refuse unless the caller explicitly opts in.
+  const skippedUntracked = metadata.skippedUntracked ?? []
+  const isPartial = metadata.completeness === 'partial' || skippedUntracked.length > 0
+  if (isPartial && !params.allowPartialRestore) {
+    return {
+      ok: false,
+      reason: 'partial',
+      message:
+        `This checkpoint is partial: ${skippedUntracked.length} untracked file(s) were too large to snapshot and are NOT stored in it. ` +
+        'Restoring would permanently delete them. Re-run with allowPartialRestore to proceed (a full rescue checkpoint will be taken first).',
+      skippedUntracked
+    }
+  }
+
   try {
     const repositoryRoot = metadata.repositoryRoot
     await assertNoUnmerged(repositoryRoot)
-    const targetRef = await resolveCheckpointTarget(repositoryRoot, params.dataDir, metadata)
+    const targetRef = await resolveCheckpointTarget(repositoryRoot, root, metadata)
 
     // Busy guard: a checkpoint restore runs `git reset --hard` + `git clean
     // -fd`, which would destroy files the agent is actively editing. Before
@@ -560,12 +719,35 @@ export async function restoreGitCheckpoint(params: {
       }
     }
 
+    // The rescue checkpoint is the safety net for `reset --hard` + `clean -fd`.
+    // Never bypass the storage budget here: an unbounded rescue reintroduces the
+    // disk-exhaustion failure this service is meant to prevent. Instead require a
+    // COMPLETE rescue and fail closed before the first destructive git command.
     const rescue = await createGitCheckpoint({
       dataDir: params.dataDir,
+      storage: params.storage,
       workspaceRoot: repositoryRoot,
       threadId: `${metadata.threadId}:rollback-rescue`
     })
-    const rescueCheckpointId = rescue.ok ? rescue.checkpointId : null
+    if (!rescue.ok) {
+      return {
+        ok: false,
+        reason: rescue.reason,
+        message: `Cannot safely restore checkpoint because the rescue snapshot failed: ${rescue.message}`
+      }
+    }
+    const rescueMetadata = await readMetadata(root, rescue.checkpointId)
+    if (!rescueMetadata || rescueMetadata.completeness !== 'complete') {
+      return {
+        ok: false,
+        reason: 'partial',
+        message:
+          'Cannot safely restore checkpoint because the current workspace does not fit the configured rescue snapshot limits. ' +
+          'Increase the checkpoint limits or move/remove the oversized untracked files, then retry.',
+        skippedUntracked: rescueMetadata?.skippedUntracked ?? []
+      }
+    }
+    const rescueCheckpointId = rescue.checkpointId
 
     await runGit(repositoryRoot, ['reset', '--hard'], 30_000)
     await runGit(repositoryRoot, ['clean', '-fd'], 30_000)
@@ -577,7 +759,7 @@ export async function restoreGitCheckpoint(params: {
     await runGit(repositoryRoot, ['reset', '--hard', targetRef], 30_000)
     await runGit(repositoryRoot, ['clean', '-fd'], 30_000)
 
-    const dir = checkpointDir(params.dataDir, checkpointId)
+    const dir = checkpointDir(root, checkpointId)
     await applyPatchIfPresent(repositoryRoot, join(dir, 'staged.patch'), true)
     await applyPatchIfPresent(repositoryRoot, join(dir, 'unstaged.patch'), false)
 

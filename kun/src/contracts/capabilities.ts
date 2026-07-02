@@ -83,6 +83,19 @@ export type McpTrustScope = z.infer<typeof McpTrustScope>
 export const McpToolDiscoveryMode = z.enum(['direct', 'search', 'auto'])
 export type McpToolDiscoveryMode = z.infer<typeof McpToolDiscoveryMode>
 
+export const McpOAuthConfig = z
+  .object({
+    enabled: z.boolean().default(true),
+    clientName: z.string().min(1).optional(),
+    clientId: z.string().min(1).optional(),
+    clientSecret: z.string().min(1).optional(),
+    scopes: z.array(z.string().min(1)).default([]),
+    redirectPort: z.number().int().min(1024).max(65535).optional(),
+    callbackTimeoutMs: z.number().int().positive().default(120_000)
+  })
+  .strict()
+export type McpOAuthConfig = z.infer<typeof McpOAuthConfig>
+
 export const McpSearchConfig = z
   .object({
     enabled: z.boolean().default(false),
@@ -124,6 +137,7 @@ export const McpServerConfig = z
     // Visibility scope: empty means globally visible; otherwise the server is
     // advertised only when ToolHostContext.workspace is under one of these roots.
     workspaceRoots: z.array(z.string().min(1)).default([]),
+    oauth: McpOAuthConfig.optional(),
     trustScope: McpTrustScope.default('workspace'),
     trustedWorkspaceRoots: z.array(z.string().min(1)).default([]),
     timeoutMs: z.number().int().positive().default(30_000)
@@ -219,7 +233,7 @@ export type SubagentMode = z.infer<typeof SubagentMode>
  * to side-effect-free investigation tools — no bash/edit/write, and no
  * nested `delegate_task`.
  */
-export const SUBAGENT_READ_ONLY_TOOL_NAMES = ['read', 'grep', 'find', 'ls'] as const
+export const SUBAGENT_READ_ONLY_TOOL_NAMES = ['read', 'grep', 'find', 'ls', 'repo_map'] as const
 
 export const SubagentProfileConfig = z
   .object({
@@ -302,11 +316,23 @@ export type SubagentsCapabilityConfig = z.output<typeof SubagentsCapabilityConfi
 export const DEFAULT_ATTACHMENT_TEXT_FALLBACK_MAX_BASE64_BYTES = 512 * 1024
 export const DEFAULT_ATTACHMENT_TEXT_FALLBACK_MAX_IMAGE_DIMENSION = 1280
 export const DEFAULT_ATTACHMENT_TEXT_FALLBACK_PREFERRED_MIME_TYPE = 'image/webp'
+export const DEFAULT_ATTACHMENT_DOCUMENT_MIME_TYPES = [
+  'application/pdf',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'application/json'
+]
+export const DEFAULT_ATTACHMENT_MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
+export const DEFAULT_ATTACHMENT_MAX_DOCUMENT_TEXT_CHARS = 200_000
 
 export const AttachmentsCapabilityConfig = CapabilityToggleConfig.extend({
   maxImageBytes: z.number().int().positive().default(5 * 1024 * 1024),
   maxImageDimension: z.number().int().positive().default(4096),
   allowedMimeTypes: z.array(z.string().min(1)).default(['image/png', 'image/jpeg', 'image/webp']),
+  allowedDocumentMimeTypes: z.array(z.string().min(1)).default(DEFAULT_ATTACHMENT_DOCUMENT_MIME_TYPES),
+  maxDocumentBytes: z.number().int().positive().default(DEFAULT_ATTACHMENT_MAX_DOCUMENT_BYTES),
+  maxDocumentTextChars: z.number().int().positive().default(DEFAULT_ATTACHMENT_MAX_DOCUMENT_TEXT_CHARS),
   textFallbackMaxBase64Bytes: z.number().int().positive().default(DEFAULT_ATTACHMENT_TEXT_FALLBACK_MAX_BASE64_BYTES),
   textFallbackMaxImageDimension: z.number().int().positive().default(DEFAULT_ATTACHMENT_TEXT_FALLBACK_MAX_IMAGE_DIMENSION),
   textFallbackPreferredMimeType: z.string().min(1).default(DEFAULT_ATTACHMENT_TEXT_FALLBACK_PREFERRED_MIME_TYPE)
@@ -468,6 +494,9 @@ export const RuntimeCapabilityManifest = z
       maxImageBytes: z.number().int().positive(),
       maxImageDimension: z.number().int().positive(),
       allowedMimeTypes: z.array(z.string().min(1)),
+      allowedDocumentMimeTypes: z.array(z.string().min(1)),
+      maxDocumentBytes: z.number().int().positive(),
+      maxDocumentTextChars: z.number().int().positive(),
       textFallbackMaxBase64Bytes: z.number().int().positive(),
       textFallbackMaxImageDimension: z.number().int().positive(),
       textFallbackPreferredMimeType: z.string().min(1)
@@ -634,6 +663,9 @@ export function buildRuntimeCapabilityManifest(input: {
       maxImageBytes: config.attachments.maxImageBytes,
       maxImageDimension: config.attachments.maxImageDimension,
       allowedMimeTypes: config.attachments.allowedMimeTypes,
+      allowedDocumentMimeTypes: config.attachments.allowedDocumentMimeTypes,
+      maxDocumentBytes: config.attachments.maxDocumentBytes,
+      maxDocumentTextChars: config.attachments.maxDocumentTextChars,
       textFallbackMaxBase64Bytes: config.attachments.textFallbackMaxBase64Bytes,
       textFallbackMaxImageDimension: config.attachments.textFallbackMaxImageDimension,
       textFallbackPreferredMimeType: config.attachments.textFallbackPreferredMimeType

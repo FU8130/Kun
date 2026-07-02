@@ -1,4 +1,5 @@
 import type {
+  AgentProvider,
   ChatBlock,
   CompactionBlock,
   NormalizedThread,
@@ -23,7 +24,7 @@ import {
 import type { ClawImChannelV1 } from '@shared/app-settings'
 import { isBackgroundShellNoticeUserMessage } from '@shared/background-shell-notice'
 import type { ChatState } from './chat-store-types'
-import { isClawThread } from './chat-store-helpers'
+import { hydrateBlockModelLabels, isClawThread } from './chat-store-helpers'
 import {
   collectAssistantTextForTurn,
   isOptimisticUserBlockId,
@@ -265,7 +266,13 @@ export function clearWatchedCompletionNotification(threadId: string): void {
 }
 
 function notifyTurnComplete(threadId: string | null, state: ChatState, dedupeKey: string): void {
-  if (!threadId || typeof window.kunGui?.showTurnCompleteNotification !== 'function') return
+  if (
+    !threadId ||
+    typeof window === 'undefined' ||
+    typeof window.kunGui?.showTurnCompleteNotification !== 'function'
+  ) {
+    return
+  }
   if (!rememberCompletionNotificationKey(dedupeKey)) return
 
   const threadTitle =
@@ -612,6 +619,85 @@ export type ThreadEventSinkBinding = {
    * live bubble.
    */
   sinceSeq?: number
+  getThreadDetail?: AgentProvider['getThreadDetail']
+}
+
+function assistantTextAfterUser(blocks: ChatBlock[], userBlockId: string): string {
+  const userIndex = blocks.findIndex((block) => block.kind === 'user' && block.id === userBlockId)
+  if (userIndex < 0) return ''
+  const parts: string[] = []
+  for (let index = userIndex + 1; index < blocks.length; index += 1) {
+    const block = blocks[index]
+    if (block.kind === 'user') break
+    if (block.kind === 'assistant' && block.text.trim()) parts.push(block.text.trim())
+  }
+  return parts.join('\n\n').trim()
+}
+
+function hasAssistantTextForCompletedTurn(
+  state: Pick<ChatState, 'blocks' | 'liveAssistant'>,
+  turnId: string | null | undefined,
+  userBlockId: string | null | undefined
+): boolean {
+  if (state.liveAssistant.trim()) return true
+  const normalizedTurnId = turnId?.trim()
+  if (normalizedTurnId) {
+    return state.blocks.some(
+      (block) => block.kind === 'assistant' && block.turnId === normalizedTurnId && block.text.trim()
+    )
+  }
+  const normalizedUserBlockId = userBlockId?.trim()
+  return normalizedUserBlockId ? !!assistantTextAfterUser(state.blocks, normalizedUserBlockId) : false
+}
+
+async function reconcileCompletedTurnFromThreadDetail(input: {
+  threadId: string | null | undefined
+  turnId: string | null | undefined
+  userBlockId: string | null | undefined
+  loadThreadDetail: AgentProvider['getThreadDetail']
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void
+  get: () => ChatState
+}): Promise<void> {
+  const threadId = input.threadId?.trim()
+  if (!threadId) return
+  if (hasAssistantTextForCompletedTurn(input.get(), input.turnId, input.userBlockId)) return
+
+  try {
+    const detail = await input.loadThreadDetail(threadId)
+    const loaded = hydrateBlockModelLabels(threadId, detail.blocks)
+    const hasPersistedCompletion =
+      hasAssistantTextForCompletedTurn(
+        { blocks: loaded, liveAssistant: '' } as Pick<ChatState, 'blocks' | 'liveAssistant'>,
+        input.turnId,
+        input.userBlockId
+      ) || detail.latestSeq > input.get().lastSeq
+    if (!hasPersistedCompletion) return
+
+    input.set((state) => {
+      if (state.activeThreadId !== threadId) return {}
+      if (state.busy) return {}
+      if (state.currentTurnId && state.currentTurnId !== input.turnId) return {}
+      if (hasAssistantTextForCompletedTurn(state, input.turnId, input.userBlockId)) return {}
+
+      const busy = threadSnapshotLooksRunning(loaded, detail.threadStatus)
+      const blocks = busy ? loaded : settlePendingRuntimeWorkAfterInterrupt(loaded)
+      return {
+        blocks,
+        lastSeq: Math.max(state.lastSeq, detail.latestSeq),
+        liveReasoning: '',
+        liveAssistant: '',
+        activeThreadGoal: detail.goal ?? state.activeThreadGoal,
+        activeThreadTodos: detail.todos ?? state.activeThreadTodos,
+        error: clearRuntimeStreamRecoveringError(state.error)
+      }
+    })
+  } catch (error) {
+    if (typeof window === 'undefined') return
+    void window.kunGui?.logError?.('turn-completion-reconcile', 'Failed to reconcile completed turn', {
+      message: error instanceof Error ? error.message : String(error),
+      threadId
+    }).catch(() => undefined)
+  }
 }
 
 export function buildThreadEventSink(
@@ -621,6 +707,7 @@ export function buildThreadEventSink(
 ): ThreadEventSink {
   const boundThreadId = binding.threadId?.trim() ?? ''
   let appliedDeltaSeqFloor = binding.sinceSeq ?? 0
+  const loadThreadDetail = binding.getThreadDetail ?? ((threadId: string) => getProvider().getThreadDetail(threadId))
   const isCurrentStream = (): boolean => {
     if (binding.signal?.aborted) return false
     return !boundThreadId || get().activeThreadId === boundThreadId
@@ -1168,6 +1255,12 @@ export function buildThreadEventSink(
       const completedState = get()
       const completedThreadId = completedState.activeThreadId
       const completedTurnId = completedState.currentTurnId
+      const completedUserBlockId = completedState.currentTurnUserId
+      const shouldReconcileCompletion = !hasAssistantTextForCompletedTurn(
+        completedState,
+        completedTurnId,
+        completedUserBlockId
+      )
       const completedKey = completedState.currentTurnId
         ? `turn:${completedState.currentTurnId}`
         : `active:${completedThreadId ?? 'unknown'}:${completedState.lastSeq}`
@@ -1211,6 +1304,16 @@ export function buildThreadEventSink(
       notifySddChatTranscriptMirror(get)
       notifyDesignChatTranscriptMirror(get)
       syncTurnCompletionPoll(set, get)
+      if (shouldReconcileCompletion) {
+        void reconcileCompletedTurnFromThreadDetail({
+          threadId: completedThreadId,
+          turnId: completedTurnId,
+          userBlockId: completedUserBlockId,
+          loadThreadDetail,
+          set,
+          get
+        })
+      }
       void get().refreshThreads()
       // Release worktree when the turn finishes and there are no queued
       // follow-ups that would start a new turn in the same thread.

@@ -9,6 +9,8 @@ import {
   KUN_MEMORY_DIAGNOSTICS_TEMPLATE,
   KUN_MEMORY_RECORD_TEMPLATE,
   KUN_MEMORY_TEMPLATE,
+  KUN_MCP_OAUTH_SERVER_TEMPLATE,
+  KUN_MCP_OAUTH_TEMPLATE,
   KUN_RUNTIME_INFO_TEMPLATE,
   KUN_RUNTIME_TOOLS_TEMPLATE,
   KUN_SESSION_RESUME_TEMPLATE,
@@ -160,6 +162,8 @@ const ENDPOINTS: readonly EndpointTemplate[] = [
   compileEndpoint(KUN_MEMORY_TEMPLATE, ['GET', 'POST']),
   compileEndpoint(KUN_MEMORY_DIAGNOSTICS_TEMPLATE, ['GET']),
   compileEndpoint(KUN_MEMORY_RECORD_TEMPLATE, ['PATCH', 'DELETE']),
+  compileEndpoint(KUN_MCP_OAUTH_TEMPLATE, ['GET', 'DELETE']),
+  compileEndpoint(KUN_MCP_OAUTH_SERVER_TEMPLATE, ['DELETE']),
   compileEndpoint(KUN_THREADS_TEMPLATE, ['GET', 'POST']),
   compileEndpoint(KUN_THREAD_TEMPLATE, ['GET', 'PATCH', 'DELETE']),
   compileEndpoint(KUN_THREAD_FORK_TEMPLATE, ['POST']),
@@ -534,7 +538,11 @@ const checkpointCleanupPatchSchema = z.object({
     z.literal(3),
     z.literal(5),
     z.literal(10)
-  ]).optional()
+  ]).optional(),
+  // Issue #651: user-configurable checkpoint storage directory (e.g. another
+  // drive) + per-thread retention cap. Empty string clears the override.
+  directory: z.string().max(4096).optional(),
+  maxPerThread: z.number().int().min(1).max(100).optional()
 }).strict()
 
 const notificationsPatchSchema = z.object({
@@ -1392,6 +1400,7 @@ const settingsPatchObjectSchema = z.object({
   conversationWorkspaceRoot: defaultPathSchema,
   log: logPatchSchema.optional(),
   checkpointCleanup: checkpointCleanupPatchSchema.optional(),
+  gitBranchPrefix: trimmedString(128).or(z.literal('')).optional(),
   notifications: notificationsPatchSchema.optional(),
   appBehavior: appBehaviorPatchSchema.optional(),
   keyboardShortcuts: keyboardShortcutsPatchSchema.optional(),
@@ -1469,7 +1478,8 @@ export const gitCheckpointCreatePayloadSchema = z
 
 export const gitCheckpointRestorePayloadSchema = z
   .object({
-    checkpointId: trimmedString(MAX_ID_LENGTH * 4)
+    checkpointId: trimmedString(MAX_ID_LENGTH * 4),
+    allowPartialRestore: z.boolean().optional()
   })
   .strict()
 

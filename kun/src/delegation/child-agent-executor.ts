@@ -16,6 +16,7 @@ import { InflightTracker } from '../loop/inflight-tracker.js'
 import { SteeringQueue } from '../loop/steering-queue.js'
 import type { TokenEconomyConfig } from '../loop/token-economy.js'
 import type { MemoryStore } from '../memory/memory-store.js'
+import type { ArtifactStore } from '../artifacts/artifact-store.js'
 import type { ModelClient } from '../ports/model-client.js'
 import { RandomIdGenerator } from '../ports/id-generator.js'
 import type { SessionStore } from '../ports/session-store.js'
@@ -43,6 +44,7 @@ export type ChildAgentExecutorOptions = {
   modelCapabilities?: (model: string) => ModelCapabilityMetadata
   skillRuntime?: SkillRuntime
   memoryStore?: MemoryStore
+  artifactStore?: ArtifactStore
   /**
    * Persistence wiring. When the main runtime's stores + event recorder are
    * supplied, the child runs as a persisted `relation: 'side'` thread on the
@@ -159,6 +161,7 @@ export function createChildAgentExecutor(options: ChildAgentExecutorOptions): Ch
       ...(options.modelCapabilities ? { modelCapabilities: options.modelCapabilities } : {}),
       ...(options.skillRuntime ? { skillRuntime: options.skillRuntime } : {}),
       ...(options.memoryStore ? { memoryStore: options.memoryStore } : {}),
+      ...(options.artifactStore ? { artifactStore: options.artifactStore } : {}),
       ...(options.contextCompaction ? { contextCompaction: options.contextCompaction } : {}),
       ...(options.tokenEconomy ? { tokenEconomy: options.tokenEconomy } : {}),
       ...(options.runtime?.toolStorm ? { toolStorm: options.runtime.toolStorm } : {}),
@@ -189,9 +192,12 @@ export function createChildAgentExecutor(options: ChildAgentExecutorOptions): Ch
     })
     // A profile preamble rides in the prompt body (not the system prompt) so
     // the cached stable prefix stays byte-identical to the main agent's.
-    const prompt = input.promptPreamble?.trim()
+    const promptBase = input.promptPreamble?.trim()
       ? `${input.promptPreamble.trim()}\n\n${input.prompt}`
       : input.prompt
+    const prompt = input.returnFormat === 'evidence'
+      ? `${promptBase}\n\nReturn a concise evidence-based conclusion. Inspect the task with tools so the parent can verify the result.`
+      : promptBase
     const started = await turns.startTurn({
       threadId: thread.id,
       request: {
@@ -228,11 +234,15 @@ export function createChildAgentExecutor(options: ChildAgentExecutorOptions): Ch
     const toolInvocations = items.filter(
       (item) => item.turnId === started.turnId && item.kind === 'tool_call'
     ).length
+    const evidence = input.returnFormat === 'evidence'
+      ? childToolEvidence(items, started.turnId)
+      : undefined
     if (status !== 'completed') {
       throw new Error(summary || `child agent ${status}`)
     }
     return {
       summary,
+      ...(evidence ? { evidence } : {}),
       usage: usage.forThread(thread.id),
       toolInvocations,
       // The child loop was constructed with the main agent's immutable
@@ -241,6 +251,30 @@ export function createChildAgentExecutor(options: ChildAgentExecutorOptions): Ch
       inheritedHistoryItems: 0
     }
   }
+}
+
+function childToolEvidence(items: readonly TurnItem[], turnId: string): string[] {
+  const results = new Map(items
+    .filter((item): item is Extract<TurnItem, { kind: 'tool_result' }> =>
+      item.turnId === turnId && item.kind === 'tool_result')
+    .map((item) => [item.callId, item]))
+  return items
+    .filter((item): item is Extract<TurnItem, { kind: 'tool_call' }> =>
+      item.turnId === turnId && item.kind === 'tool_call')
+    .slice(0, 32)
+    .map((item) => {
+      const result = results.get(item.callId)
+      const target = toolEvidenceTarget(item.arguments)
+      return `${item.toolName}${target ? ` ${target}` : ''}: ${result?.isError ? 'failed' : 'completed'}`
+    })
+}
+
+function toolEvidenceTarget(args: Record<string, unknown>): string {
+  for (const key of ['path', 'filePath', 'file_path', 'query', 'command']) {
+    const value = args[key]
+    if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 300)
+  }
+  return ''
 }
 
 function childThreadTitle(childId: string, label?: string, profile?: string): string {

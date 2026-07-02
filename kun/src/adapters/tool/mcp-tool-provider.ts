@@ -1,18 +1,33 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { createHash } from 'node:crypto'
-import { posix, win32 } from 'node:path'
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
-import type {
-  McpCapabilityConfig,
-  McpServerConfig
-} from '../../contracts/capabilities.js'
+import type { McpCapabilityConfig, McpServerConfig } from '../../contracts/capabilities.js'
 import { redactSecretText } from '../../config/secret-redaction.js'
 import type { ToolHostContext } from '../../ports/tool-host.js'
 import type { CapabilityToolProvider } from './capability-registry.js'
 import { LocalToolHost, type LocalTool } from './local-tool-host.js'
+import {
+  catalogFingerprint,
+  canUseMcpServer,
+  isMcpServerTrusted,
+  isMcpServerVisible,
+  normalizeMcpToolName
+} from './mcp-naming.js'
+import {
+  clearMcpOAuthCredentials,
+  listMcpOAuthDiagnostics
+} from './mcp-oauth-provider.js'
+import {
+  authorizeMcpServerOAuth,
+  createSdkMcpClient,
+  isMcpAuthorizationRequiredError
+} from './mcp-transport.js'
+import { errorMessage, formatMcpConnectionError } from './mcp-stdio-environment.js'
+import type {
+  McpClientLike,
+  McpOAuthAuthorizeResult,
+  McpOAuthClearResult,
+  McpOAuthDiagnostic,
+  McpServerDiagnostic,
+  McpToolDescriptor
+} from './mcp-types.js'
 import {
   createMcpSearchProvider,
   mcpSearchDiagnostic,
@@ -21,64 +36,49 @@ import {
   type McpSearchRuntimeDiagnostic
 } from './mcp-tool-search.js'
 
-export type McpToolDescriptor = {
-  name: string
-  title?: string
-  description?: string
-  inputSchema?: Record<string, unknown>
-  outputSchema?: Record<string, unknown>
-  annotations?: {
-    title?: string
-    readOnlyHint?: boolean
-    destructiveHint?: boolean
-    idempotentHint?: boolean
-    openWorldHint?: boolean
-  }
-  execution?: unknown
-  icons?: unknown
-  _meta?: Record<string, unknown>
-}
-
-export type McpClientLike = {
-  listTools(options?: {
-    cursor?: string
-    signal?: AbortSignal
-    timeout?: number
-  }): Promise<{ tools: McpToolDescriptor[]; nextCursor?: string }>
-  callTool(
-    input: { name: string; arguments: Record<string, unknown> },
-    options?: { signal?: AbortSignal; timeout?: number }
-  ): Promise<unknown>
-  close(): Promise<void>
-  setLifecycleHandlers?(handlers: McpClientLifecycleHandlers): void
-}
-
-export type McpClientLifecycleHandlers = {
-  onError?: (error: Error) => void
-  onClose?: () => void
-}
-
-export type McpServerDiagnostic = {
-  id: string
-  enabled: boolean
-  transport: McpServerConfig['transport']
-  trustScope: McpServerConfig['trustScope']
-  available: boolean
-  status: 'disabled' | 'connected' | 'reconnecting' | 'error'
-  toolCount: number
-  catalogFingerprint?: string
-  catalogDrift?: boolean
-  lastConnectedAt?: string
-  lastDisconnectedAt?: string
-  lastReconnectAt?: string
-  nextReconnectAt?: string
-  reconnectAttempts?: number
-  lastError?: string
-}
+// Re-export the MCP module surface so existing consumers (and the
+// `adapters/tool/index.ts` barrel) keep importing from one place even though
+// the implementation now lives in focused modules: persistence, OAuth, the
+// transport adapter, naming/trust, and stdio environment.
+export type {
+  McpClientLike,
+  McpClientLifecycleHandlers,
+  McpOAuthAuthorizeResult,
+  McpOAuthClearResult,
+  McpOAuthDiagnostic,
+  McpOAuthStatus,
+  McpServerDiagnostic,
+  McpToolDescriptor
+} from './mcp-types.js'
+export {
+  canUseMcpServer,
+  isMcpServerTrusted,
+  isMcpServerVisible,
+  normalizeMcpToolName,
+  resolveMcpServerCwd
+} from './mcp-naming.js'
+export {
+  FileMcpOAuthProvider,
+  clearMcpOAuthCredentials,
+  createMcpOAuthProvider,
+  listMcpOAuthDiagnostics
+} from './mcp-oauth-provider.js'
+export {
+  authorizeMcpServerOAuth,
+  createSdkMcpClient,
+  isMcpAuthorizationRequiredError,
+  McpAuthorizationRequiredError
+} from './mcp-transport.js'
+export {
+  buildMcpStdioEnvironment,
+  formatMcpConnectionError,
+  type McpStdioEnvironmentOptions
+} from './mcp-stdio-environment.js'
 
 export type McpToolProviderBuildResult = {
   providers: CapabilityToolProvider[]
   diagnostics: McpServerDiagnostic[]
+  oauth: McpOAuthDiagnostic[]
   search: McpSearchRuntimeDiagnostic
   connectedServers: number
   toolCount: number
@@ -93,12 +93,23 @@ export type McpToolProviderBuildResult = {
    * failed server has reconnected or exhausted its retries (used by tests).
    */
   startBackgroundReconnect: (register: (provider: CapabilityToolProvider) => void) => Promise<void>
+  clearOAuthCredentials: (serverId?: string) => Promise<McpOAuthClearResult>
+  /**
+   * Run the interactive OAuth authorization flow for one configured remote
+   * server (the explicit, user-triggered entry point). Refreshes the cached
+   * OAuth diagnostics on completion. Startup never calls this.
+   */
+  authorizeOAuth: (serverId: string) => Promise<McpOAuthAuthorizeResult>
   close: () => Promise<void>
 }
 
 export type McpToolProviderOptions = {
   clientFactory?: (serverId: string, server: McpServerConfig) => Promise<McpClientLike>
   nowIso?: () => string
+  oauthStorageDir?: string
+  /** Optional encryptor so persisted OAuth tokens are encrypted at rest. */
+  oauthEncryptor?: import('../../security/secret-store.js').SecretEncryptor
+  openExternal?: (url: URL) => void | Promise<void>
   /**
    * Upper bound for connect + initial tool listing per server during startup.
    * A slow or hung server (e.g. an npx-based stdio server resolving packages)
@@ -109,6 +120,12 @@ export type McpToolProviderOptions = {
   backgroundReconnect?: McpBackgroundReconnectOptions
   /** Test seam for the inter-attempt backoff; defaults to a real unref'd timer. */
   delay?: (ms: number) => Promise<void>
+  /**
+   * Test seam for the interactive authorization step. Defaults to the real
+   * browser-driven {@link authorizeMcpServerOAuth}. Tests inject a fake to
+   * exercise the authorize-then-register + reconnect path without a network.
+   */
+  authorize?: (serverId: string, server: McpServerConfig) => Promise<McpOAuthAuthorizeResult>
 }
 
 export type McpBackgroundReconnectOptions = {
@@ -127,11 +144,6 @@ const DEFAULT_MCP_RECONNECT_MAX_ATTEMPTS = 5
 const DEFAULT_MCP_RECONNECT_BASE_DELAY_MS = 4_000
 const DEFAULT_MCP_RECONNECT_MAX_DELAY_MS = 30_000
 
-export type McpStdioEnvironmentOptions = {
-  platform?: NodeJS.Platform
-  baseEnv?: NodeJS.ProcessEnv
-}
-
 type McpConnectionState = {
   serverId: string
   server: McpServerConfig
@@ -141,14 +153,18 @@ type McpConnectionState = {
   catalogFingerprint?: string
   catalogDrift?: boolean
   lastConnectedAt?: string
-  lastDisconnectedAt?: string
-  lastReconnectAt?: string
-  nextReconnectAt?: string
+  lastError?: string
+  // Reconnect state machine (#642/#639), ported from upstream so a dropped
+  // transport flips the live diagnostic to `reconnecting`/`error` and a single
+  // shared reconnect recovers concurrent callers.
+  status: 'connected' | 'reconnecting' | 'error'
   reconnectAttempts: number
   reconnectBackoffMs: number
   reconnectPromise?: Promise<McpClientLike>
-  lastError?: string
-  status: 'connected' | 'reconnecting' | 'error'
+  lastDisconnectedAt?: string
+  lastReconnectAt?: string
+  nextReconnectAt?: string
+  /** Live diagnostic object — the SAME reference stored in the diagnostics array. */
   diagnostic?: McpServerDiagnostic
   intentionallyClosing?: boolean
 }
@@ -164,11 +180,17 @@ export async function buildMcpToolProviders(
   const catalogState: McpSearchCatalogState = { records: [] }
   const mcp = config
   const nowIso = options.nowIso ?? (() => new Date().toISOString())
-  const clientFactory = options.clientFactory ?? createSdkMcpClient
+  const clientFactory = options.clientFactory ?? ((serverId, server) =>
+    createSdkMcpClient(serverId, server, {
+      storageDir: options.oauthStorageDir,
+      openExternal: options.openExternal,
+      ...(options.oauthEncryptor ? { encryptor: options.oauthEncryptor } : {})
+    }))
   if (!mcp?.enabled) {
     return {
       providers,
       diagnostics,
+      oauth: [],
       search: mcpSearchDiagnostic({
         config: config?.search ?? {
           enabled: false,
@@ -187,6 +209,8 @@ export async function buildMcpToolProviders(
       connectedServers: 0,
       toolCount: 0,
       startBackgroundReconnect: async () => undefined,
+      clearOAuthCredentials: async () => ({ cleared: [] }),
+      authorizeOAuth: async (serverId) => ({ serverId, status: 'disabled', authorized: false }),
       close: async () => undefined
     }
   }
@@ -218,9 +242,9 @@ export async function buildMcpToolProviders(
           client,
           clientFactory,
           nowIso,
+          status: 'connected',
           reconnectAttempts: 0,
           reconnectBackoffMs: DEFAULT_MCP_RECONNECT_BASE_DELAY_MS,
-          status: 'connected',
           lastConnectedAt: nowIso()
         }
         attachMcpClientLifecycle(state)
@@ -242,12 +266,13 @@ export async function buildMcpToolProviders(
       continue
     }
     if (outcome.status === 'error') {
+      const authRequired = isMcpAuthorizationRequiredError(outcome.error)
       diagnostics.push(
         serverDiagnostic(
           { serverId: outcome.serverId, server: outcome.server },
-          'error',
+          authRequired ? 'authorization_required' : 'error',
           0,
-          formatMcpConnectionError(outcome.error, outcome.server)
+          startupConnectionError(outcome.error, outcome.server)
         )
       )
       continue
@@ -268,6 +293,10 @@ export async function buildMcpToolProviders(
 
   const connectedServers = diagnostics.filter((diagnostic) => diagnostic.status === 'connected').length
   const toolCount = catalogState.records.length
+  const oauthDiagnostics = await listMcpOAuthDiagnostics(mcp, {
+    storageDir: options.oauthStorageDir,
+    encryptor: options.oauthEncryptor
+  })
   catalogState.lastRefreshedAt = nowIso()
   catalogState.catalogFingerprint = catalogFingerprint(catalogState.records.map((record) => record.toolId))
   const searchActive = shouldUseMcpSearch(mcp.search, toolCount) && connectedServers > 0
@@ -301,15 +330,113 @@ export async function buildMcpToolProviders(
   }
   const advertisedToolCount = providers.reduce((total, provider) => total + provider.tools.length, 0)
 
+  // Servers that need OAuth authorization are NOT retried by the background
+  // reconnect loop — retrying just burns attempts and would re-hit a 401. They
+  // wait in `authorization_required` until the user authorizes, after which
+  // authorizeOAuth() performs a single live connect + register.
   const failedServers = outcomes.flatMap((outcome) =>
-    outcome.status === 'error' ? [{ serverId: outcome.serverId, server: outcome.server }] : []
+    outcome.status === 'error' && !isMcpAuthorizationRequiredError(outcome.error)
+      ? [{ serverId: outcome.serverId, server: outcome.server }]
+      : []
   )
   let reconnectAborted = false
   let reconnectStarted = false
+  /** Captured from startBackgroundReconnect so authorizeOAuth can register live. */
+  let liveRegister: ((provider: CapabilityToolProvider) => void) | null = null
+  /** Per-serverId authorization single-flight: concurrent clicks share one run. */
+  const authorizeInFlight = new Map<string, Promise<McpOAuthAuthorizeResult>>()
+
+  const refreshOAuthDiagnostics = async (): Promise<void> => {
+    const nextDiagnostics = await listMcpOAuthDiagnostics(mcp, {
+      storageDir: options.oauthStorageDir,
+      encryptor: options.oauthEncryptor
+    })
+    oauthDiagnostics.splice(0, oauthDiagnostics.length, ...nextDiagnostics)
+  }
+
+  /**
+   * Connect a server live (using the real/injected client factory), list its
+   * tools, register the provider, and flip its diagnostic to `connected` — no
+   * runtime restart required after a successful authorization.
+   */
+  const connectAndRegisterServer = async (serverId: string, server: McpServerConfig): Promise<void> => {
+    const client = await clientFactory(serverId, server)
+    const state: McpConnectionState = {
+      serverId,
+      server,
+      client,
+      clientFactory,
+      nowIso,
+      status: 'connected',
+      reconnectAttempts: 0,
+      reconnectBackoffMs: DEFAULT_MCP_RECONNECT_BASE_DELAY_MS,
+      lastConnectedAt: nowIso()
+    }
+    attachMcpClientLifecycle(state)
+    let listed: McpToolDescriptor[]
+    try {
+      listed = await refreshMcpConnectionCatalog(state)
+    } catch (error) {
+      await client.close().catch(() => undefined)
+      throw error
+    }
+    connected.push(state)
+    catalogState.records.push(...listed.map((tool) => createMcpSearchCatalogRecord(state, tool)))
+    catalogState.catalogFingerprint = catalogFingerprint(catalogState.records.map((record) => record.toolId))
+    catalogState.lastRefreshedAt = nowIso()
+    const tools = listed.map((tool) => createMcpLocalTool(state, tool))
+    if (!searchActive && liveRegister) {
+      try {
+        liveRegister({ id: `mcp:${serverId}`, kind: 'mcp', enabled: true, available: true, tools })
+      } catch {
+        // Registry collision must not break the authorize flow; the diagnostic
+        // still flips to connected below.
+      }
+    }
+    const diagnostic = syncMcpDiagnostic(state, 'connected', tools.length)
+    const index = diagnostics.findIndex((entry) => entry.id === serverId)
+    if (index >= 0) diagnostics[index] = diagnostic
+    else diagnostics.push(diagnostic)
+  }
+
+  const authorizeOAuth = (serverId: string): Promise<McpOAuthAuthorizeResult> => {
+    const inflight = authorizeInFlight.get(serverId)
+    if (inflight) return inflight
+    const run = (async (): Promise<McpOAuthAuthorizeResult> => {
+      const server = mcp.servers[serverId]
+      if (!server || !options.oauthStorageDir) {
+        return { serverId, status: 'disabled', authorized: false }
+      }
+      const authorize = options.authorize ??
+        ((id: string, srv: McpServerConfig) => authorizeMcpServerOAuth(id, srv, {
+          storageDir: options.oauthStorageDir as string,
+          openExternal: options.openExternal,
+          encryptor: options.oauthEncryptor
+        }))
+      const result = await authorize(serverId, server)
+      await refreshOAuthDiagnostics()
+      // On success, connect + register immediately so tools are live without a
+      // runtime restart. Skip if the server is already connected.
+      if (result.authorized && !connected.some((state) => state.serverId === serverId)) {
+        try {
+          await connectAndRegisterServer(serverId, server)
+        } catch {
+          // Leave the server in its prior diagnostic state; the user can retry.
+        }
+      }
+      return result
+    })()
+    authorizeInFlight.set(serverId, run)
+    run.finally(() => {
+      if (authorizeInFlight.get(serverId) === run) authorizeInFlight.delete(serverId)
+    }).catch(() => undefined)
+    return run
+  }
 
   return {
     providers,
     diagnostics,
+    oauth: oauthDiagnostics,
     search: mcpSearchDiagnostic({
       config: mcp.search,
       active: searchActive,
@@ -320,6 +447,7 @@ export async function buildMcpToolProviders(
     connectedServers,
     toolCount,
     startBackgroundReconnect: (register) => {
+      liveRegister = register
       if (reconnectStarted) return Promise.resolve()
       reconnectStarted = true
       if (failedServers.length === 0) return Promise.resolve()
@@ -338,11 +466,33 @@ export async function buildMcpToolProviders(
         options: options.backgroundReconnect
       })
     },
+    clearOAuthCredentials: async (serverId) => {
+      const result = await clearMcpOAuthCredentials(mcp, {
+        storageDir: options.oauthStorageDir,
+        serverId
+      })
+      await refreshOAuthDiagnostics()
+      return result
+    },
+    authorizeOAuth,
     close: async () => {
       reconnectAborted = true
-      await Promise.all(connected.map((state) => closeMcpClient(state)))
+      await Promise.all(connected.map((state) => state.client.close().catch(() => undefined)))
     }
   }
+}
+
+/**
+ * Turn a startup connect failure into an actionable diagnostic message.
+ * Authorization-required failures (a remote OAuth server with no usable token)
+ * are expected during startup — the connect is non-interactive — so they get a
+ * "use Authorize" hint instead of a raw transport error.
+ */
+function startupConnectionError(error: unknown, server: McpServerConfig): string {
+  if (isMcpAuthorizationRequiredError(error)) {
+    return 'OAuth authorization required. Use the connector\'s Authorize action to sign in; the runtime will not prompt automatically during startup.'
+  }
+  return formatMcpConnectionError(error, server)
 }
 
 type FailedMcpServer = { serverId: string; server: McpServerConfig }
@@ -389,7 +539,6 @@ async function reconnectFailedMcpServer(
 ): Promise<void> {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (params.isAborted()) return
-    updateFailedServerDiagnostic(params.diagnostics, failed, 'reconnecting', attempt)
     await params.delay(Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1)))
     if (params.isAborted()) return
     try {
@@ -400,27 +549,21 @@ async function reconnectFailedMcpServer(
         client,
         clientFactory: params.clientFactory,
         nowIso: params.nowIso,
+        status: 'connected',
         reconnectAttempts: 0,
         reconnectBackoffMs: DEFAULT_MCP_RECONNECT_BASE_DELAY_MS,
-        status: 'connected',
         lastConnectedAt: params.nowIso()
       }
       attachMcpClientLifecycle(state)
       const listed = await refreshMcpConnectionCatalog(state)
       if (params.isAborted()) {
-        await closeMcpClient(state)
+        await client.close().catch(() => undefined)
         return
       }
       registerLateMcpConnection(params, state, listed)
       return
-    } catch (error) {
-      updateFailedServerDiagnostic(
-        params.diagnostics,
-        failed,
-        'error',
-        attempt,
-        formatMcpConnectionError(error, failed.server)
-      )
+    } catch {
+      // Leave the diagnostic as "error" and try again until attempts run out.
     }
   }
 }
@@ -456,27 +599,6 @@ function registerLateMcpConnection(
   else params.diagnostics.push(diagnostic)
 }
 
-function updateFailedServerDiagnostic(
-  diagnostics: McpServerDiagnostic[],
-  failed: FailedMcpServer,
-  status: Extract<McpServerDiagnostic['status'], 'reconnecting' | 'error'>,
-  attempt: number,
-  lastError?: string
-): void {
-  const index = diagnostics.findIndex((entry) => entry.id === failed.serverId)
-  const previous = index >= 0 ? diagnostics[index] : undefined
-  const next: McpServerDiagnostic = {
-    ...(previous ?? serverDiagnostic({ serverId: failed.serverId, server: failed.server }, 'error', 0)),
-    status,
-    available: false,
-    reconnectAttempts: attempt,
-    lastReconnectAt: new Date().toISOString(),
-    ...(lastError ? { lastError: redactSecretText(lastError) } : {})
-  }
-  if (index >= 0) diagnostics[index] = next
-  else diagnostics.push(next)
-}
-
 function defaultMcpReconnectDelay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms)
@@ -484,105 +606,6 @@ function defaultMcpReconnectDelay(ms: number): Promise<void> {
       ;(timer as { unref: () => void }).unref()
     }
   })
-}
-
-export function normalizeMcpToolName(serverId: string, toolName: string): string {
-  return `mcp_${slug(serverId)}_${slug(toolName)}`
-}
-
-export function isMcpServerTrusted(server: McpServerConfig, workspace: string): boolean {
-  if (server.trustScope === 'user') return true
-  return workspaceMatchesRoots(workspace, server.trustedWorkspaceRoots)
-}
-
-export function isMcpServerVisible(server: McpServerConfig, workspace: string): boolean {
-  if (server.workspaceRoots.length === 0) return true
-  return workspaceMatchesRoots(workspace, server.workspaceRoots)
-}
-
-export function canUseMcpServer(server: McpServerConfig, workspace: string): boolean {
-  return isMcpServerVisible(server, workspace) && isMcpServerTrusted(server, workspace)
-}
-
-function workspaceMatchesRoots(workspace: string, roots: readonly string[]): boolean {
-  const normalizedWorkspace = normalizePathForTrust(workspace)
-  return roots.some((root) => {
-    const normalizedRoot = normalizePathForTrust(root)
-    return normalizedWorkspace === normalizedRoot || normalizedWorkspace.startsWith(`${normalizedRoot}/`)
-  })
-}
-
-async function createSdkMcpClient(serverId: string, server: McpServerConfig): Promise<McpClientLike> {
-  const client = new Client({ name: `kun-${serverId}`, version: '0.1.0' })
-  // Observe transport-level failures explicitly. The SDK routes a dropped SSE
-  // stream and exhausted background reconnects to `onerror`; with no handler
-  // they are silently swallowed, which hides real outages from the logs and (on
-  // some SDK/runtime versions) lets the rejection escape as unhandled. Handling
-  // it here keeps a streamable-http disconnect from destabilizing the runtime
-  // (#639) — the per-call reconnect in callMcpToolWithReconnect still recovers
-  // the connection on the next tool use.
-  client.onerror = (error) => {
-    process.stderr.write(`kun mcp[${serverId}]: transport error: ${redactSecretText(errorMessage(error))}\n`)
-  }
-  const transport = createTransport(server)
-  await client.connect(transport, { timeout: server.timeoutMs })
-  return {
-    listTools: (options) => {
-      const params = options?.cursor ? { cursor: options.cursor } : undefined
-      return client.listTools(params, {
-        signal: options?.signal,
-        timeout: options?.timeout
-      })
-    },
-    callTool: (input, options) => client.callTool(input, undefined, options),
-    close: () => client.close(),
-    setLifecycleHandlers: (handlers) => {
-      client.onerror = handlers.onError
-      client.onclose = handlers.onClose
-    }
-  }
-}
-
-function createTransport(server: McpServerConfig): Transport {
-  switch (server.transport) {
-    case 'stdio': {
-      const cwd = resolveMcpServerCwd(server)
-      return new StdioClientTransport({
-        command: server.command ?? '',
-        args: server.args,
-        env: buildMcpStdioEnvironment(server.env),
-        ...(cwd ? { cwd } : {}),
-        stderr: 'pipe'
-      })
-    }
-    case 'streamable-http':
-      return new StreamableHTTPClientTransport(new URL(server.url ?? ''), {
-        requestInit: { headers: server.headers }
-      })
-    case 'sse':
-      return new SSEClientTransport(new URL(server.url ?? ''), {
-        requestInit: { headers: server.headers },
-        eventSourceInit: { fetch: fetchWithHeaders(server.headers) }
-      })
-  }
-}
-
-export function resolveMcpServerCwd(server: McpServerConfig): string | undefined {
-  if (server.transport !== 'stdio') return undefined
-  const configured = server.cwd?.trim()
-  if (configured) return configured
-  if (server.trustScope !== 'workspace') return undefined
-  return server.trustedWorkspaceRoots.map((root) => root.trim()).find(Boolean)
-}
-
-function fetchWithHeaders(headers: Record<string, string>): typeof fetch {
-  return (input, init) => {
-    const mergedHeaders = new Headers(init?.headers)
-    for (const [key, value] of Object.entries(headers)) {
-      mergedHeaders.set(key, value)
-    }
-    return fetch(input, { ...init, headers: mergedHeaders })
-  }
 }
 
 function createMcpLocalTool(
@@ -608,21 +631,12 @@ function createMcpLocalTool(
           isError: true
         }
       }
-      if (state.status === 'error' && !canAttemptMcpReconnect(state)) {
-        return {
-          output: {
-            error: mcpReconnectCooldownMessage(state),
-            serverId: state.serverId,
-            status: state.status,
-            nextReconnectAt: state.nextReconnectAt
-          },
-          isError: true
-        }
-      }
       const result = await callMcpToolWithReconnect(
         state,
         { name: descriptor.name, arguments: args },
-        context.abortSignal
+        context.abortSignal,
+        state.server.timeoutMs,
+        isMcpReplaySafe(descriptor.annotations)
       )
       return {
         output: {
@@ -657,7 +671,7 @@ function createMcpSearchCatalogRecord(
     server: state.server,
     client: {
       callTool: (input, options) =>
-        callMcpToolWithReconnect(state, input, options?.signal, options?.timeout)
+        callMcpToolWithReconnect(state, input, options?.signal, options?.timeout, isMcpReplaySafe(descriptor.annotations))
     },
     descriptor,
     normalizedName: normalizeMcpToolName(state.serverId, descriptor.name),
@@ -679,10 +693,22 @@ async function callMcpToolWithReconnect(
   state: McpConnectionState,
   input: { name: string; arguments: Record<string, unknown> },
   signal: AbortSignal | undefined,
-  timeout = state.server.timeoutMs
+  timeout = state.server.timeoutMs,
+  /**
+   * Whether this specific tool is safe to REPLAY after a mid-call transport
+   * drop. Only tools explicitly marked read-only or idempotent are safe; a
+   * non-idempotent tool may have already executed on the server before the
+   * transport failed, so replaying it could duplicate its side effects.
+   */
+  replaySafe = false
 ): Promise<unknown> {
+  // Track whether the request actually reached `callTool`. A failure while
+  // (re)connecting BEFORE the request was sent means the tool definitely did
+  // not run, so retrying it on the fresh connection is always safe.
+  let sentToServer = false
   try {
     await ensureMcpConnectionForCall(state, signal)
+    sentToServer = true
     return await state.client.callTool(input, { signal, timeout })
   } catch (error) {
     if (signal?.aborted) throw error
@@ -696,8 +722,52 @@ async function callMcpToolWithReconnect(
       throw error
     }
     markMcpConnectionError(state, error)
-    const client = await reconnectMcpConnection(state, signal)
-    return client.callTool(input, { signal, timeout })
+    if (!sentToServer || replaySafe) {
+      // Either the request never left (safe) or the tool is read-only/idempotent
+      // (safe to repeat) — replay it on the reconnected client.
+      const client = await reconnectMcpConnection(state, signal)
+      return client.callTool(input, { signal, timeout })
+    }
+    // A non-idempotent tool dropped mid-flight: it may already have run on the
+    // server. Preserve that primary fact even when reconnect also fails: future
+    // calls can reconnect in the background, but this call must always surface
+    // status-unknown rather than a secondary transport error.
+    void reconnectMcpConnection(state, undefined).catch(() => undefined)
+    throw new McpToolStatusUnknownError(state.serverId, input.name, error)
+  }
+}
+
+/**
+ * MCP annotations that make a tool safe to replay after a mid-call transport
+ * drop. Per the MCP spec the hints default to the UNSAFE side (readOnlyHint
+ * false, idempotentHint false, destructiveHint effectively true), so we only
+ * treat a tool as replay-safe when it is EXPLICITLY read-only or idempotent.
+ * Absent annotations → not safe → no auto-replay.
+ */
+function isMcpReplaySafe(annotations: McpToolDescriptor['annotations']): boolean {
+  if (!annotations) return false
+  if (annotations.readOnlyHint === true && annotations.destructiveHint !== true) return true
+  if (annotations.idempotentHint === true && annotations.destructiveHint !== true) return true
+  return false
+}
+
+/**
+ * Thrown when a non-idempotent MCP tool's transport dropped mid-call, so its
+ * server-side outcome is unknown and it was NOT auto-replayed.
+ */
+export class McpToolStatusUnknownError extends Error {
+  readonly statusUnknown = true
+  constructor(
+    readonly serverId: string,
+    readonly toolName: string,
+    readonly causeError: unknown
+  ) {
+    super(
+      `MCP tool "${toolName}" on server "${serverId}" lost its connection mid-call; ` +
+        'its result is unknown and it was not retried automatically because it is not marked read-only or idempotent. ' +
+        'Verify whether it took effect before re-running it.'
+    )
+    this.name = 'McpToolStatusUnknownError'
   }
 }
 
@@ -906,6 +976,9 @@ function syncMcpDiagnostic(
     ...(state.reconnectAttempts > 0 ? { reconnectAttempts: state.reconnectAttempts } : {}),
     ...(state.lastError ? { lastError: redactSecretText(state.lastError) } : {})
   }
+  // The diagnostics array stores this exact object reference; mutate it in
+  // place so live status changes (reconnecting/error/connected) are visible to
+  // anyone holding the array without re-indexing.
   if (!state.diagnostic) {
     state.diagnostic = diagnostic
     return diagnostic
@@ -915,174 +988,4 @@ function syncMcpDiagnostic(
   }
   Object.assign(state.diagnostic, diagnostic)
   return state.diagnostic
-}
-
-function catalogFingerprint(values: readonly string[]): string {
-  return createHash('sha256')
-    .update(JSON.stringify([...values].sort()))
-    .digest('hex')
-    .slice(0, 16)
-}
-
-function slug(value: string): string {
-  let out = ''
-  for (const char of value.trim().toLowerCase()) {
-    if (isSlugChar(char)) {
-      out += char
-    } else if (out && out[out.length - 1] !== '_') {
-      out += '_'
-    }
-  }
-  return trimBoundaryUnderscores(out) || 'tool'
-}
-
-function normalizePathForTrust(value: string): string {
-  return trimTrailingSlashes(value.replaceAll('\\', '/'))
-}
-
-function isSlugChar(char: string): boolean {
-  const code = char.charCodeAt(0)
-  return char === '_' || (code >= 48 && code <= 57) || (code >= 97 && code <= 122)
-}
-
-function trimBoundaryUnderscores(value: string): string {
-  let start = 0
-  let end = value.length
-  while (start < end && value[start] === '_') start += 1
-  while (end > start && value[end - 1] === '_') end -= 1
-  return value.slice(start, end)
-}
-
-function trimTrailingSlashes(value: string): string {
-  let end = value.length
-  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1
-  return end === value.length ? value : value.slice(0, end)
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-export function buildMcpStdioEnvironment(
-  serverEnv: Record<string, string> = {},
-  options: McpStdioEnvironmentOptions = {}
-): Record<string, string> {
-  const platform = options.platform ?? process.platform
-  const baseEnv = options.baseEnv ?? process.env
-  const pathKey = findPathKey(serverEnv) ?? findPathKey(baseEnv) ?? 'PATH'
-  const configuredPath = readEnvPath(serverEnv)
-  const inheritedPath = readEnvPath(baseEnv)
-  const pathValue = mergePathEntries(
-    [configuredPath ?? inheritedPath ?? '', ...commonMcpCommandPathEntries(platform, baseEnv)],
-    pathDelimiter(platform)
-  )
-  return {
-    ...serverEnv,
-    ...(pathValue ? { [pathKey]: pathValue } : {})
-  }
-}
-
-export function formatMcpConnectionError(error: unknown, server: McpServerConfig): string {
-  const message = errorMessage(error)
-  if (server.transport !== 'stdio' || !isMissingExecutableError(error, message)) return message
-  const command = missingExecutableCommand(error) ?? server.command ?? 'configured command'
-  const hint = isBareCommand(command)
-    ? missingBareCommandHint(command)
-    : `Could not find MCP command "${command}". Check that the configured executable path exists.`
-  return `${message}. ${hint}`
-}
-
-function commonMcpCommandPathEntries(
-  platform: NodeJS.Platform,
-  env: NodeJS.ProcessEnv
-): string[] {
-  if (platform === 'darwin') {
-    return [
-      '/opt/homebrew/bin',
-      '/usr/local/bin',
-      '/opt/local/bin',
-      homePath(env, '.volta/bin'),
-      homePath(env, '.local/bin'),
-      homePath(env, '.bun/bin')
-    ].filter((entry): entry is string => Boolean(entry))
-  }
-  if (platform === 'linux') {
-    return [
-      '/home/linuxbrew/.linuxbrew/bin',
-      '/usr/local/bin',
-      '/usr/bin',
-      homePath(env, '.volta/bin'),
-      homePath(env, '.local/bin'),
-      homePath(env, '.bun/bin')
-    ].filter((entry): entry is string => Boolean(entry))
-  }
-  if (platform === 'win32') {
-    return [
-      env.APPDATA ? win32.join(env.APPDATA, 'npm') : '',
-      env.ProgramFiles ? win32.join(env.ProgramFiles, 'nodejs') : '',
-      env['ProgramFiles(x86)'] ? win32.join(env['ProgramFiles(x86)'], 'nodejs') : ''
-    ].filter((entry): entry is string => Boolean(entry))
-  }
-  return []
-}
-
-function findPathKey(env: Record<string, string | undefined>): string | undefined {
-  return Object.keys(env).find((key) => key.toLowerCase() === 'path')
-}
-
-function readEnvPath(env: Record<string, string | undefined>): string | undefined {
-  const key = findPathKey(env)
-  const value = key ? env[key] : undefined
-  return value && value.trim() ? value : undefined
-}
-
-function mergePathEntries(values: string[], delimiter: string): string {
-  const seen = new Set<string>()
-  const entries: string[] = []
-  for (const value of values) {
-    for (const entry of value.split(delimiter)) {
-      const trimmed = entry.trim()
-      if (!trimmed) continue
-      const key = trimmed.toLowerCase()
-      if (seen.has(key)) continue
-      seen.add(key)
-      entries.push(trimmed)
-    }
-  }
-  return entries.join(delimiter)
-}
-
-function pathDelimiter(platform: NodeJS.Platform): string {
-  return platform === 'win32' ? ';' : ':'
-}
-
-function homePath(env: NodeJS.ProcessEnv, relativePath: string): string {
-  return env.HOME ? posix.join(env.HOME, relativePath) : ''
-}
-
-function isMissingExecutableError(error: unknown, message: string): boolean {
-  const code = typeof error === 'object' && error !== null && 'code' in error
-    ? String((error as { code?: unknown }).code ?? '')
-    : ''
-  return code === 'ENOENT' || /\bspawn\s+\S+\s+ENOENT\b/i.test(message)
-}
-
-function missingExecutableCommand(error: unknown): string | undefined {
-  if (!error || typeof error !== 'object') return undefined
-  const path = (error as { path?: unknown }).path
-  return typeof path === 'string' && path.trim() ? path.trim() : undefined
-}
-
-function isBareCommand(command: string): boolean {
-  return Boolean(command.trim()) && !command.includes('/') && !command.includes('\\')
-}
-
-function missingBareCommandHint(command: string): string {
-  if (process.platform === 'win32') {
-    return `Could not find "${command}" on PATH while starting the MCP server. Make sure Node/npm is installed and available to Kun, or set the MCP command to an absolute path.`
-  }
-  if (process.platform === 'darwin') {
-    return `Could not find "${command}" on PATH while starting the MCP server. If Kun was launched from Finder or the desktop, make sure Node/npm is installed and available to GUI apps, or set the MCP command to an absolute path such as /opt/homebrew/bin/${command}.`
-  }
-  return `Could not find "${command}" on PATH while starting the MCP server. Make sure Node/npm is installed and available to Kun, or set the MCP command to an absolute path such as /usr/local/bin/${command}.`
 }

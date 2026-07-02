@@ -111,6 +111,10 @@ function isFatalSseStatus(status: number | undefined): boolean {
   return typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429
 }
 
+function isTransientSseErrorMessage(message: string): boolean {
+  return /sse start timeout|fetch failed|network|terminated|aborted|socket|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|UND_ERR/i.test(message)
+}
+
 async function fetchSseWithStartTimeout(
   url: URL,
   headers: Record<string, string>,
@@ -285,7 +289,7 @@ export function registerRuntimeSseIpc(options: {
           } catch (e) {
             if (state.stoppedByClient || ac.signal.aborted) return
             const msg = e instanceof Error ? e.message : String(e)
-            if (/sse start timeout/i.test(msg) || /fetch failed/i.test(msg) || /network/i.test(msg)) {
+            if (isTransientSseErrorMessage(msg)) {
               await sleepWithAbort(reconnectDelayMs, ac.signal)
               reconnectDelayMs = Math.min(reconnectDelayMs * 2, SSE_RECONNECT_MAX_MS)
               continue

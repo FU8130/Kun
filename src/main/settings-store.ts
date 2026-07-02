@@ -9,6 +9,7 @@ import {
   DEFAULT_CHECKPOINT_CLEANUP_ENABLED,
   DEFAULT_CHECKPOINT_CLEANUP_INTERVAL_DAYS,
   DEFAULT_CURSOR_SPOTLIGHT_COLOR,
+  DEFAULT_GIT_BRANCH_PREFIX,
   DEFAULT_LOG_RETENTION_DAYS,
   DEFAULT_WRITE_WORKSPACE_ROOT,
   defaultClawSettings,
@@ -33,6 +34,7 @@ import {
   DEFAULT_UI_FONT_SCALE,
   normalizeAppBehaviorSettings,
   normalizeCheckpointCleanupSettings,
+  normalizeGitBranchPrefix,
   normalizeKeyboardShortcuts,
   migrateLegacyAppSettings,
   normalizeAppSettings,
@@ -243,6 +245,7 @@ const defaultSettings = (): AppSettingsV1 => ({
     enabled: DEFAULT_CHECKPOINT_CLEANUP_ENABLED,
     intervalDays: DEFAULT_CHECKPOINT_CLEANUP_INTERVAL_DAYS
   },
+  gitBranchPrefix: DEFAULT_GIT_BRANCH_PREFIX,
   notifications: {
     turnComplete: true
   },
@@ -276,6 +279,7 @@ function buildMergedSettings(parsed: Partial<AppSettingsV1>): AppSettingsV1 {
       ...defaults.checkpointCleanup,
       ...migrated.checkpointCleanup
     }),
+    gitBranchPrefix: normalizeGitBranchPrefix(migrated.gitBranchPrefix),
     notifications: { ...defaults.notifications, ...migrated.notifications },
     appBehavior: mergeAppBehaviorSettings(defaults.appBehavior, migrated.appBehavior),
     keyboardShortcuts: normalizeKeyboardShortcuts(migrated.keyboardShortcuts),

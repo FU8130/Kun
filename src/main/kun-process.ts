@@ -656,9 +656,20 @@ async function skillCapabilityConfigForRuntime(
       path.length > 0 &&
       !managed.has(comparableSkillRootPath(path)) &&
       !isCodexPluginCacheRoot(path))
+  const manualGlobalExisting = stringArrayValue(existing.globalRoots)
+    .map(normalizeSkillRootPath)
+    .filter((path) =>
+      path.length > 0 &&
+      !managed.has(comparableSkillRootPath(path)) &&
+      !isCodexPluginCacheRoot(path))
+  const guiRoots = await guiSkillRootsForRuntime(settings)
   const roots = uniqueStrings([
     ...manualExisting,
-    ...(await guiSkillRootsForRuntime(settings)).map((root) => root.path)
+    ...guiRoots.filter((root) => root.scope === 'project').map((root) => root.path)
+  ])
+  const globalRoots = uniqueStrings([
+    ...manualGlobalExisting,
+    ...guiRoots.filter((root) => root.scope === 'global').map((root) => root.path)
   ])
   return {
     ...existing,
@@ -666,11 +677,11 @@ async function skillCapabilityConfigForRuntime(
     // enable toggle, so a persisted `enabled: false` is only ever the schema
     // default leaking onto disk — it must not permanently suppress discovered
     // skills. An explicit `true` still forces on even with no roots.
-    enabled: roots.length > 0 || existing.enabled === true,
+    enabled: roots.length > 0 || globalRoots.length > 0 || existing.enabled === true,
     roots,
     workspaceRoots: guiSkillWorkspaceRootsForRuntime(settings),
     // #149: Pass global skill roots from settings (e.g. ~/.kun/skills)
-    globalRoots: existing.globalRoots ?? [],
+    globalRoots,
     // Skills the user disabled in the GUI. Forwarded so the runtime drops them
     // from discovery — without this they stay loadable via load_skill and keep
     // appearing in the catalog despite the GUI toggle (#392).
@@ -728,6 +739,7 @@ function normalizeGuiManagedMcpServer(server: unknown): Record<string, unknown> 
   const args = stringArrayValue(raw.args)
   const headers = stringRecordValue(raw.headers)
   const env = stringRecordValue(raw.env)
+  const oauth = objectValue(raw.oauth)
   const transport = normalizeMcpTransport(raw.transport, command, url)
   if (!transport) return null
 
@@ -747,6 +759,7 @@ function normalizeGuiManagedMcpServer(server: unknown): Record<string, unknown> 
     ...(Object.keys(headers).length > 0 ? { headers } : {}),
     ...(Object.keys(env).length > 0 ? { env } : {}),
     ...(workspaceRoots.length > 0 ? { workspaceRoots } : {}),
+    ...(Object.keys(oauth).length > 0 ? { oauth } : {}),
     trustScope,
     ...(trustedWorkspaceRoots.length > 0 ? { trustedWorkspaceRoots } : {}),
     ...(timeoutMs ? { timeoutMs } : {})

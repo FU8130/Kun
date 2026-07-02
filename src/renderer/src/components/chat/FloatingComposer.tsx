@@ -84,7 +84,7 @@ import {
   formatCompactNumber,
   formatCost,
   formatPercent,
-  primaryCacheHitRate,
+  cumulativeCacheHitRate,
   useThreadUsageState
 } from '../../hooks/use-thread-usage'
 import { buildContextCapacity, estimateBlockTokens } from '../../lib/context-capacity'
@@ -2534,7 +2534,7 @@ export function FloatingComposer({
                         <span className="ds-composer-usage-cache-separator text-ds-faint">·</span>
                         <span className="ds-composer-usage-cache shrink-0 truncate tabular-nums">
                           {t('sessionUsageCache', {
-                            cache: formatPercent(primaryCacheHitRate(threadUsage))
+                            cache: formatPercent(cumulativeCacheHitRate(threadUsage))
                           })}
                         </span>
                       </>

@@ -119,9 +119,10 @@ export const DEFAULT_LOG_RETENTION_DAYS = 3
 export const CHECKPOINT_CLEANUP_INTERVAL_DAYS = [1, 2, 3, 5, 10] as const
 export type CheckpointCleanupIntervalDays = (typeof CHECKPOINT_CLEANUP_INTERVAL_DAYS)[number]
 export const DEFAULT_CHECKPOINT_CLEANUP_INTERVAL_DAYS: CheckpointCleanupIntervalDays = 3
-// Checkpoint cleanup deletes data, so it is opt-in: disabled until the user
-// explicitly enables it in settings.
-export const DEFAULT_CHECKPOINT_CLEANUP_ENABLED = false
+// Checkpoint cleanup is enabled by default so stale Git checkpoint directories
+// do not accumulate. Users who want to keep every checkpoint can opt out in settings.
+export const DEFAULT_CHECKPOINT_CLEANUP_ENABLED = true
+export const DEFAULT_GIT_BRANCH_PREFIX = 'codex/'
 export const DEFAULT_CURSOR_SPOTLIGHT_COLOR = '#85c1f1'
 export const DEFAULT_WEIXIN_BRIDGE_RPC_URL = 'http://127.0.0.1:18790/api/v1/admin/rpc'
 export const DEFAULT_MODEL_PROVIDER_ID = 'deepseek'
@@ -622,6 +623,15 @@ export type LogConfigV1 = {
 export type CheckpointCleanupConfigV1 = {
   enabled: boolean
   intervalDays: CheckpointCleanupIntervalDays
+  /**
+   * Optional override for the Git checkpoint storage directory (issue #651).
+   * Lets users point checkpoints at another drive with more free space instead
+   * of filling the system drive under the Kun data dir. Absent = default
+   * (`<dataDir>/git-checkpoints`).
+   */
+  directory?: string
+  /** Keep at most this many checkpoints per thread (oldest pruned). Absent = default 5. */
+  maxPerThread?: number
 }
 
 export type NotificationConfigV1 = {
@@ -1845,6 +1855,8 @@ export type AppSettingsV1 = {
   conversationWorkspaceRoot: string
   log: LogConfigV1
   checkpointCleanup: CheckpointCleanupConfigV1
+  /** Prefix applied when the branch picker creates a branch or worktree branch. */
+  gitBranchPrefix?: string
   notifications: NotificationConfigV1
   appBehavior: AppBehaviorConfigV1
   keyboardShortcuts: KeyboardShortcutsConfigV1

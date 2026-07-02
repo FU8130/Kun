@@ -42,7 +42,9 @@ function makeSinkHarness(overrides: Partial<ChatState> = {}): {
     watchTurnCompletion: {},
     unreadThreadIds: {},
     queuedMessages: [],
-    threads: []
+    threads: [],
+    refreshThreads: vi.fn(async () => undefined),
+    drainQueuedMessages: vi.fn(async () => undefined)
   } as unknown as ChatState
   state = { ...state, ...overrides }
   const get = (): ChatState => state
@@ -234,6 +236,44 @@ describe('thread event sink binding', () => {
     sink.onSeq(3)
 
     expect(getState().lastSeq).toBe(500)
+  })
+
+  it('reconciles a completed turn from persisted detail when live assistant text was missed', async () => {
+    const getThreadDetail = vi.fn(async () => ({
+      blocks: [
+        { kind: 'user' as const, id: 'user-current', turnId: 'turn-current', text: 'check the workspace' },
+        { kind: 'assistant' as const, id: 'assistant-current', turnId: 'turn-current', text: 'Workspace is /tmp/project.' }
+      ],
+      latestSeq: 42,
+      threadStatus: 'completed'
+    }))
+    const { getState, set, get } = makeSinkHarness({
+      activeThreadId: 'thread-current',
+      blocks: [{ kind: 'user', id: 'user-current', turnId: 'turn-current', text: 'check the workspace' }],
+      liveAssistant: '',
+      lastSeq: 10,
+      busy: true,
+      currentTurnId: 'turn-current',
+      currentTurnUserId: 'user-current'
+    })
+    const sink = buildThreadEventSink(set, get, {
+      threadId: 'thread-current',
+      getThreadDetail
+    })
+
+    sink.onTurnComplete()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(getThreadDetail).toHaveBeenCalledWith('thread-current')
+    expect(getState().busy).toBe(false)
+    expect(getState().lastSeq).toBe(42)
+    expect(getState().blocks).toContainEqual({
+      kind: 'assistant',
+      id: 'assistant-current',
+      turnId: 'turn-current',
+      text: 'Workspace is /tmp/project.'
+    })
   })
 })
 

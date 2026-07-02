@@ -98,6 +98,20 @@ describe('KunRuntimeProvider', () => {
     )
   })
 
+  it('starts MCP OAuth authorization through the authenticated runtime bridge', async () => {
+    const runtimeRequest = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      body: JSON.stringify({ serverId: 'google_drive', status: 'authorized', authorized: true })
+    }))
+    installDsGui({ runtimeRequest })
+
+    const result = await new KunRuntimeProvider().authorizeMcpOAuthCredentials('google_drive')
+
+    expect(runtimeRequest).toHaveBeenCalledWith('/v1/mcp/oauth/google_drive', 'POST')
+    expect(result).toEqual({ serverId: 'google_drive', status: 'authorized', authorized: true })
+  })
+
   it('maps Kun thread items into chat blocks', async () => {
     installDsGui({
       runtimeRequest: vi.fn(async () => ({
@@ -669,6 +683,28 @@ describe('KunRuntimeProvider', () => {
           wasCompressed: true
         },
         threadId: 'thr_1'
+      })
+    )
+    await expect(provider.uploadAttachment({
+      name: 'spec.pdf',
+      mimeType: 'application/pdf',
+      dataBase64: 'JVBERi0=',
+      documentText: 'PDF body',
+      pageCount: 2,
+      localFilePath: '/tmp/picked/spec.pdf',
+      workspace: '/tmp/ws'
+    })).resolves.toMatchObject({ id: 'att_1' })
+    expect(runtimeRequest).toHaveBeenCalledWith(
+      '/v1/attachments',
+      'POST',
+      JSON.stringify({
+        name: 'spec.pdf',
+        mimeType: 'application/pdf',
+        dataBase64: 'JVBERi0=',
+        documentText: 'PDF body',
+        pageCount: 2,
+        localFilePath: '/tmp/picked/spec.pdf',
+        workspace: '/tmp/ws'
       })
     )
   })
