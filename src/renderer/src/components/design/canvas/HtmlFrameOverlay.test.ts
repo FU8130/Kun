@@ -17,7 +17,7 @@ class FakeHTMLElement {
   tagName: string
   childNodes: unknown[]
   style: Record<string, string | number>
-  rect: { width: number; height: number; bottom: number }
+  rect: { width: number; height: number; bottom: number; right?: number }
   scrollWidth = 420
   offsetWidth = 420
   clientWidth = 420
@@ -28,7 +28,7 @@ class FakeHTMLElement {
 
   constructor(
     tagName: string,
-    rect: { width: number; height: number; bottom: number },
+    rect: { width: number; height: number; bottom: number; right?: number },
     options: {
       childNodes?: unknown[]
       style?: Record<string, string | number>
@@ -42,8 +42,8 @@ class FakeHTMLElement {
     this.descendants = options.descendants ?? []
   }
 
-  getBoundingClientRect(): { width: number; height: number; bottom: number } {
-    return this.rect
+  getBoundingClientRect(): { width: number; height: number; bottom: number; right: number } {
+    return { ...this.rect, right: this.rect.right ?? this.rect.width }
   }
 
   querySelectorAll(): FakeHTMLElement[] {
@@ -56,7 +56,7 @@ class FakeSVGElement extends FakeHTMLElement {}
 type FakeTextNode = {
   nodeType: number
   textContent: string
-  rects: Array<{ width: number; height: number; bottom: number }>
+  rects: Array<{ width: number; height: number; bottom: number; right?: number }>
 }
 
 function runContentSizeQuery(body: FakeHTMLElement): {
@@ -64,6 +64,7 @@ function runContentSizeQuery(body: FakeHTMLElement): {
   height: number
   documentHeight: number
   paintedHeight: number
+  paintedWidth: number
 } {
   const html = new FakeHTMLElement('html', { width: 420, height: 844, bottom: 844 })
   const fakeDocument = {
@@ -82,6 +83,7 @@ function runContentSizeQuery(body: FakeHTMLElement): {
   }
   const fakeWindow = {
     scrollY: 0,
+    scrollX: 0,
     innerWidth: 420,
     innerHeight: 844,
     getComputedStyle: (el: FakeHTMLElement) => ({
@@ -109,6 +111,7 @@ function runContentSizeQuery(body: FakeHTMLElement): {
     height: number
     documentHeight: number
     paintedHeight: number
+    paintedWidth: number
   }
 }
 
@@ -197,6 +200,22 @@ describe('HtmlFrameOverlay content measurement query', () => {
       documentHeight: measured.documentHeight
     })).toBe(true)
   })
+
+  it('measures painted width so auto frames can reveal wide HTML content', () => {
+    const widePanel = new FakeHTMLElement('section', { width: 1180, height: 300, bottom: 300, right: 1180 }, {
+      style: {
+        backgroundColor: '#ffffff'
+      }
+    })
+    const body = new FakeHTMLElement('body', { width: 420, height: 844, bottom: 844 }, {
+      descendants: [widePanel]
+    })
+
+    const measured = runContentSizeQuery(body)
+
+    expect(measured.width).toBe(1180)
+    expect(measured.paintedWidth).toBe(1180)
+  })
 })
 
 describe('HtmlFrameOverlay internal scrollbar suppression', () => {
@@ -240,9 +259,11 @@ describe('HtmlFrameOverlay webview script execution', () => {
 describe('HtmlFrameOverlay measurement decision', () => {
   it('turns a tall blank document tail into an auto-cropped frame and scrollbar suppression', () => {
     expect(resolveHtmlFrameMeasurementDecision({
+      width: 420,
       height: 141,
       documentHeight: 844
     })).toEqual({
+      nextWidth: 420,
       nextHeight: 180,
       documentHeight: 844,
       suppressScrollbars: true
@@ -251,9 +272,11 @@ describe('HtmlFrameOverlay measurement decision', () => {
 
   it('does not suppress scrollbars when measured content and document height match', () => {
     expect(resolveHtmlFrameMeasurementDecision({
+      width: 420,
       height: 844,
       documentHeight: 850
     })).toEqual({
+      nextWidth: 420,
       nextHeight: 844,
       documentHeight: 850,
       suppressScrollbars: false
@@ -263,6 +286,7 @@ describe('HtmlFrameOverlay measurement decision', () => {
   it('ignores invalid webview measurements', () => {
     expect(resolveHtmlFrameMeasurementDecision(null)).toBeNull()
     expect(resolveHtmlFrameMeasurementDecision({ height: Number.NaN })).toBeNull()
+    expect(resolveHtmlFrameMeasurementDecision({ width: Number.NaN, height: 844 })).toBeNull()
   })
 })
 

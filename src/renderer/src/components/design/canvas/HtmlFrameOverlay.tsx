@@ -34,6 +34,8 @@ const PREVIEW_FAST_POLL_MS = 6_000
 /** Give up polling a preview that never lands after this (matches the page-generation ceiling). */
 const PREVIEW_MAX_WAIT_MS = 300_000
 const FRAME_AUTO_GROW_THRESHOLD = 12
+const FRAME_AUTO_GROW_MAX_WIDTH = 7_680
+const FRAME_AUTO_GROW_MIN_WIDTH = 240
 const FRAME_AUTO_GROW_MAX_HEIGHT = 12_000
 const FRAME_AUTO_GROW_MIN_HEIGHT = 180
 const HTML_FRAME_SCROLLBAR_STYLE_ID = '__kun_html_frame_auto_crop_scrollbars__'
@@ -46,8 +48,8 @@ export const HTML_FRAME_CONTENT_SIZE_QUERY = `(() => {
     const n = Number.parseFloat(value || '0')
     return Number.isFinite(n) ? n : 0
   }
-  const textBottoms = (el, style) => {
-    const bottoms = []
+  const textRects = (el, style) => {
+    const rects = []
     for (const node of Array.from(el.childNodes)) {
       if (node.nodeType !== Node.TEXT_NODE) continue
       if (!(node.textContent || '').trim()) continue
@@ -55,11 +57,15 @@ export const HTML_FRAME_CONTENT_SIZE_QUERY = `(() => {
       range.selectNodeContents(node)
       for (const piece of Array.from(range.getClientRects())) {
         if (piece.width < 1 || piece.height < 1) continue
-        bottoms.push(piece.bottom + window.scrollY + numericCss(style.paddingBottom) + numericCss(style.borderBottomWidth))
+        const pieceRight = Number.isFinite(piece.right) ? piece.right : piece.width
+        rects.push({
+          bottom: piece.bottom + window.scrollY + numericCss(style.paddingBottom) + numericCss(style.borderBottomWidth),
+          right: pieceRight + (window.scrollX || 0) + numericCss(style.paddingRight) + numericCss(style.borderRightWidth)
+        })
       }
       if (typeof range.detach === 'function') range.detach()
     }
-    return bottoms
+    return rects
   }
   const hasVisibleBoxPaint = (el, style, rect) => {
     if (el === body || el === html) return false
@@ -71,7 +77,7 @@ export const HTML_FRAME_CONTENT_SIZE_QUERY = `(() => {
     return hasBackgroundColor
   }
   const candidates = body ? [body, ...Array.from(body.querySelectorAll('*'))] : []
-  const visibleElementBottoms = candidates.flatMap((el) => {
+  const visibleElementRects = candidates.flatMap((el) => {
         if (!(el instanceof HTMLElement || el instanceof SVGElement)) return []
         const tag = el.tagName.toLowerCase()
         if (tag === 'script' || tag === 'style' || tag === 'template') return []
@@ -81,11 +87,14 @@ export const HTML_FRAME_CONTENT_SIZE_QUERY = `(() => {
         if (rect.width < 1 || rect.height < 1) return []
         const hasMedia = ['img', 'svg', 'canvas', 'video', 'picture'].includes(tag)
         return [
-          ...textBottoms(el, style),
-          ...(hasMedia || hasVisibleBoxPaint(el, style, rect) ? [rect.bottom + window.scrollY] : [])
+          ...textRects(el, style),
+          ...(hasMedia || hasVisibleBoxPaint(el, style, rect)
+            ? [{ bottom: rect.bottom + window.scrollY, right: (Number.isFinite(rect.right) ? rect.right : rect.width) + (window.scrollX || 0) }]
+            : [])
         ]
       })
-  const paintedHeight = visibleElementBottoms.length ? Math.max(...visibleElementBottoms) : 0
+  const paintedHeight = visibleElementRects.length ? Math.max(...visibleElementRects.map((rect) => rect.bottom)) : 0
+  const paintedWidth = visibleElementRects.length ? Math.max(...visibleElementRects.map((rect) => rect.right)) : 0
   const width = Math.max(...nums(
     html?.scrollWidth,
     html?.offsetWidth,
@@ -93,6 +102,7 @@ export const HTML_FRAME_CONTENT_SIZE_QUERY = `(() => {
     body?.scrollWidth,
     body?.offsetWidth,
     body?.clientWidth,
+    paintedWidth,
     window.innerWidth
   ), 1)
   const documentHeight = Math.max(...nums(
@@ -108,7 +118,8 @@ export const HTML_FRAME_CONTENT_SIZE_QUERY = `(() => {
     width: Math.ceil(width),
     height: Math.ceil(height),
     documentHeight: Math.ceil(documentHeight),
-    paintedHeight: Math.ceil(paintedHeight)
+    paintedHeight: Math.ceil(paintedHeight),
+    paintedWidth: Math.ceil(paintedWidth)
   }
 })()`
 
@@ -168,6 +179,7 @@ export function executeHtmlFrameWebviewScript(
 }
 
 export type HtmlFrameMeasurementDecision = {
+  nextWidth: number
   nextHeight: number
   documentHeight: number
   suppressScrollbars: boolean
@@ -175,17 +187,23 @@ export type HtmlFrameMeasurementDecision = {
 
 export function resolveHtmlFrameMeasurementDecision(value: unknown): HtmlFrameMeasurementDecision | null {
   if (!value || typeof value !== 'object') return null
-  const measured = value as { height?: unknown; documentHeight?: unknown }
+  const measured = value as { width?: unknown; height?: unknown; documentHeight?: unknown }
+  if (typeof measured.width !== 'number' || !Number.isFinite(measured.width)) return null
   if (typeof measured.height !== 'number' || !Number.isFinite(measured.height)) return null
   const documentHeight =
     typeof measured.documentHeight === 'number' && Number.isFinite(measured.documentHeight)
       ? measured.documentHeight
       : measured.height
+  const nextWidth = Math.max(
+    FRAME_AUTO_GROW_MIN_WIDTH,
+    Math.min(FRAME_AUTO_GROW_MAX_WIDTH, Math.ceil(measured.width))
+  )
   const nextHeight = Math.max(
     FRAME_AUTO_GROW_MIN_HEIGHT,
     Math.min(FRAME_AUTO_GROW_MAX_HEIGHT, Math.ceil(measured.height))
   )
   return {
+    nextWidth,
     nextHeight,
     documentHeight,
     suppressScrollbars: htmlFrameShouldSuppressDocumentScrollbars({
@@ -394,7 +412,10 @@ function ScreenOverlayInner({
   const [qualityChecked, setQualityChecked] = useState(false)
   const [qualityFindings, setQualityFindings] = useState<DesignHtmlQualityFinding[]>([])
   const [qualityDetailsOpen, setQualityDetailsOpen] = useState(false)
-  const [measuredContentHeight, setMeasuredContentHeight] = useState<number | null>(null)
+  const [measuredContentSize, setMeasuredContentSize] = useState<{
+    width: number
+    height: number
+  } | null>(null)
   const [suppressDocumentScrollbars, setSuppressDocumentScrollbars] = useState(false)
   const [webviewMountNonce, setWebviewMountNonce] = useState(0)
 
@@ -644,7 +665,7 @@ function ScreenOverlayInner({
 
   useEffect(() => {
     setSelectedElementRect(null)
-    setMeasuredContentHeight(null)
+    setMeasuredContentSize(null)
     setSuppressDocumentScrollbars(false)
   }, [artifact?.id, artifact?.relativePath, shape.id])
 
@@ -813,8 +834,8 @@ function ScreenOverlayInner({
         // while the agent streamed the HTML, so once the final (shorter) layout
         // lands the frame keeps the leftover space as a big white band below the
         // content. Mirroring DesignProjectCanvas, follow the real content height.
-        const { nextHeight, suppressScrollbars } = decision
-        setMeasuredContentHeight(nextHeight)
+        const { nextWidth, nextHeight, suppressScrollbars } = decision
+        setMeasuredContentSize({ width: nextWidth, height: nextHeight })
         setSuppressDocumentScrollbars(suppressScrollbars)
         // A <webview> navigation replaces the guest document, so an already-true
         // React state value is not enough to keep the injected style alive across
@@ -825,13 +846,19 @@ function ScreenOverlayInner({
           buildHtmlFrameScrollbarSuppressionScript(suppressScrollbars)
         )?.catch(() => undefined)
         if (!allowAutoGrow) return
-        if (Math.abs(nextHeight - current.height) <= FRAME_AUTO_GROW_THRESHOLD) return
-        store.updateShape(shape.id, { height: nextHeight }, true)
+        const widthChanged = Math.abs(nextWidth - current.width) > FRAME_AUTO_GROW_THRESHOLD
+        const heightChanged = Math.abs(nextHeight - current.height) > FRAME_AUTO_GROW_THRESHOLD
+        if (!widthChanged && !heightChanged) return
+        const patch = {
+          ...(widthChanged ? { width: nextWidth } : {}),
+          ...(heightChanged ? { height: nextHeight } : {})
+        }
+        store.updateShape(shape.id, patch, true)
         useDesignWorkspaceStore.getState().updateArtifactNode(artifact.id, {
           x: Math.round(current.x),
           y: Math.round(current.y),
-          width: Math.round(current.width),
-          height: nextHeight,
+          width: widthChanged ? nextWidth : Math.round(current.width),
+          height: heightChanged ? nextHeight : Math.round(current.height),
           sizeMode: 'auto',
           viewMode: artifact.node?.viewMode ?? 'preview'
         })
@@ -842,8 +869,6 @@ function ScreenOverlayInner({
     artifact?.node?.sizeMode,
     artifact?.node?.viewMode,
     artifact?.previewStatus,
-    artifact?.role,
-    artifact?.title,
     artifactKind,
     foundationRole,
     parallelState?.status,
@@ -948,7 +973,7 @@ function ScreenOverlayInner({
   const transparentGeneratingSurface = skeletonPreview || drawingActive
   const visualCanvasHeight = htmlFrameVisualCanvasHeight(
     canvasHeight,
-    measuredContentHeight
+    measuredContentSize?.height ?? null
   )
   const visualScreenHeight = (visualCanvasHeight / canvasHeight) * screenHeight
   const QualityIcon =

@@ -148,13 +148,19 @@ function defaultFrameSizeForArtifact(
   designTarget: DesignTarget | undefined
 ): Pick<Rect, 'width' | 'height'> {
   if (isFoundationArtifact(artifact)) {
-    const compact = defaultDesignArtifactNode(index)
     const measuredAutoNode = autoArtifactNode(artifact, index)
+    const foundationFrame = defaultFrameSizeForDesignTarget('web')
+    const compact = defaultDesignArtifactNode(index)
+    const measuredWidth = measuredAutoNode ? Math.round(measuredAutoNode.width) : 0
+    const hasLegacyCompactWidth =
+      measuredAutoNode && Math.abs(measuredWidth - compact.width) < 1
     return {
-      width: compact.width,
+      width: measuredAutoNode && !hasLegacyCompactWidth
+        ? Math.max(BOARD_HTML_FRAME_MIN_WIDTH, Math.round(measuredAutoNode.width))
+        : foundationFrame.width,
       height: measuredAutoNode
         ? Math.max(BOARD_HTML_FRAME_MIN_HEIGHT, Math.round(measuredAutoNode.height))
-        : compact.height
+        : foundationFrame.height
     }
   }
   return defaultFrameSizeForDesignTarget(designTarget)

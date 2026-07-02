@@ -176,7 +176,7 @@ describe('design board helpers', () => {
     })
   })
 
-  it('keeps foundation artifacts compact instead of turning them into app-sized whiteboards', () => {
+  it('uses full desktop frames for foundation artifacts instead of compact preview cards', () => {
     useDesignWorkspaceStore.setState({ designContext: { designTarget: 'app' } })
     const logo = artifact('logo', 'html', {
       title: 'Logo',
@@ -190,13 +190,13 @@ describe('design board helpers', () => {
     const frame = synced.document.objects[synced.addedFrameIds[0]]
     expect(frame).toMatchObject({
       htmlArtifactId: 'logo',
-      width: 420,
-      height: 340,
+      width: 1280,
+      height: 800,
       devicePreset: 'desktop'
     })
   })
 
-  it('keeps localized foundation-title artifacts compact when role metadata is missing', () => {
+  it('uses full desktop frames for localized foundation-title artifacts when role metadata is missing', () => {
     useDesignWorkspaceStore.setState({ designContext: { designTarget: 'app' } })
     const system = artifact('system', 'html', {
       title: '设计系统',
@@ -209,13 +209,13 @@ describe('design board helpers', () => {
     const frame = synced.document.objects[synced.addedFrameIds[0]]
     expect(frame).toMatchObject({
       htmlArtifactId: 'system',
-      width: 420,
-      height: 340,
+      width: 1280,
+      height: 800,
       devicePreset: 'desktop'
     })
   })
 
-  it('shrinks existing foundation frames back to compact board cards even from old manual nodes', () => {
+  it('upgrades existing foundation frames from old manual mobile nodes to full desktop frames', () => {
     useDesignWorkspaceStore.setState({ designContext: { designTarget: 'app' } })
     const doc = createEmptyDocument()
     const root = doc.objects[doc.rootId]
@@ -237,13 +237,13 @@ describe('design board helpers', () => {
     expect(synced.document.objects[existing.id]).toMatchObject({
       x: 80,
       y: 120,
-      width: 420,
-      height: 340,
+      width: 1280,
+      height: 800,
       devicePreset: 'desktop'
     })
   })
 
-  it('keeps measured auto height for foundation frames after board sync', () => {
+  it('keeps measured auto height but upgrades legacy compact foundation width after board sync', () => {
     useDesignWorkspaceStore.setState({ designContext: { designTarget: 'app' } })
     const doc = createEmptyDocument()
     const root = doc.objects[doc.rootId]
@@ -264,7 +264,7 @@ describe('design board helpers', () => {
     expect(synced.document.objects[existing.id]).toMatchObject({
       x: 80,
       y: 120,
-      width: 420,
+      width: 1280,
       height: 236,
       devicePreset: 'desktop'
     })
