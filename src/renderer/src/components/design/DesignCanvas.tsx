@@ -19,6 +19,7 @@ import { useDesignWorkspaceStore } from '../../design/design-workspace-store'
 import { DESIGN_VIEWPORT_WIDTHS, type DesignViewport } from '../../design/design-types'
 import { startWriteWorkspaceFileWatch } from '../../write/write-file-watch'
 import { highlightCodeHtml, renderFallbackCodeHtml } from '../../lib/code-highlighting'
+import { DesignGraphView } from './DesignGraphView'
 
 type WebviewEl = HTMLElement & { reload?: () => void }
 
@@ -59,6 +60,7 @@ export function DesignCanvas(): ReactElement {
 
   const activeArtifact = artifacts.find((item) => item.id === activeArtifactId) ?? null
   const relativePath = activeArtifact?.relativePath ?? ''
+  const isGraphArtifact = activeArtifact?.kind === 'graph'
 
   const [fileUrl, setFileUrl] = useState('')
   const [highlightHtml, setHighlightHtml] = useState(() => renderFallbackCodeHtml(''))
@@ -76,7 +78,7 @@ export function DesignCanvas(): ReactElement {
     setFileUrl('')
     setReady(false)
     setError('')
-    if (canvasView === 'live' || !relativePath || !workspaceRoot) return
+    if (canvasView === 'live' || !relativePath || !workspaceRoot || isGraphArtifact) return
     if (typeof window.kunGui?.watchWorkspaceFile !== 'function') {
       setError(t('designCanvasUnavailable'))
       return
@@ -144,7 +146,7 @@ export function DesignCanvas(): ReactElement {
       if (retryTimer) clearTimeout(retryTimer)
       stop()
     }
-  }, [relativePath, workspaceRoot, canvasView, liveRefresh, t])
+  }, [relativePath, workspaceRoot, canvasView, liveRefresh, isGraphArtifact, t])
 
   // Re-highlight the cached source when switching into code view.
   useEffect(() => {
@@ -199,6 +201,14 @@ export function DesignCanvas(): ReactElement {
       </div>
     </div>
   )
+
+  if (isGraphArtifact && activeArtifact) {
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ds-main">
+        <DesignGraphView artifact={activeArtifact} workspaceRoot={workspaceRoot} />
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ds-main">

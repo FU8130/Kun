@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { Code2, FilePlus2 } from 'lucide-react'
+import { Code2, FileCode2, FilePlus2, Network } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { WorkspaceModeTabs } from '../chat/WorkspaceModeTabs'
 import { useDesignWorkspaceStore } from '../../design/design-workspace-store'
@@ -11,10 +11,18 @@ type Props = {
   onDesignOpen: () => void
   /** Hand the artifact to the coding agent (design → code spine). */
   onImplement: (artifact: DesignArtifact) => void
+  /** Create a new node-canvas (graph) artifact. */
+  onNewGraph: () => void
 }
 
 /** Design-mode left sidebar: mode tabs + artifact list with implement/provenance. */
-export function DesignSidebar({ onCodeOpen, onWriteOpen, onDesignOpen, onImplement }: Props): ReactElement {
+export function DesignSidebar({
+  onCodeOpen,
+  onWriteOpen,
+  onDesignOpen,
+  onImplement,
+  onNewGraph
+}: Props): ReactElement {
   const { t } = useTranslation('common')
   const artifacts = useDesignWorkspaceStore((s) => s.artifacts)
   const activeArtifactId = useDesignWorkspaceStore((s) => s.activeArtifactId)
@@ -28,14 +36,25 @@ export function DesignSidebar({ onCodeOpen, onWriteOpen, onDesignOpen, onImpleme
         onWriteOpen={onWriteOpen}
         onDesignOpen={onDesignOpen}
       />
-      <button
-        type="button"
-        onClick={() => setActiveArtifact(null)}
-        className="mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] font-medium text-[#3b82d8] transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.05]"
-      >
-        <FilePlus2 className="h-4 w-4" strokeWidth={1.9} />
-        {t('designNewArtifact')}
-      </button>
+      <div className="mb-1 flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setActiveArtifact(null)}
+          className="flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-[13px] font-medium text-[#3b82d8] transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.05]"
+        >
+          <FilePlus2 className="h-4 w-4" strokeWidth={1.9} />
+          {t('designNewArtifact')}
+        </button>
+        <button
+          type="button"
+          onClick={onNewGraph}
+          title={t('designNewGraph')}
+          aria-label={t('designNewGraph')}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#3b82d8] transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.05]"
+        >
+          <Network className="h-4 w-4" strokeWidth={1.9} />
+        </button>
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {artifacts.length === 0 ? (
           <div className="px-2 py-2 text-[13px] leading-relaxed text-[#646e7c] dark:text-white/55">
@@ -64,6 +83,11 @@ export function DesignSidebar({ onCodeOpen, onWriteOpen, onDesignOpen, onImpleme
                       active ? 'font-medium text-[#1f2733] dark:text-white' : 'text-[#646e7c] dark:text-white/55'
                     }`}
                   >
+                    {artifact.kind === 'graph' ? (
+                      <Network className="h-3.5 w-3.5 shrink-0 opacity-60" strokeWidth={1.9} />
+                    ) : (
+                      <FileCode2 className="h-3.5 w-3.5 shrink-0 opacity-60" strokeWidth={1.9} />
+                    )}
                     <span className="min-w-0 flex-1 truncate">{artifact.title}</span>
                     {implemented ? (
                       <span

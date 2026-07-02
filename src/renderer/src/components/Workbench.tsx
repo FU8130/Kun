@@ -59,6 +59,7 @@ import { buildDesignFromCodePrompt, buildDesignTurnPrompt } from '../design/desi
 import { buildImplementDesignPrompt } from '../design/design-implement-prompt'
 import { createDesignArtifactId, type DesignArtifact } from '../design/design-types'
 import { formatDesignSystemMarkdown } from '../design/design-context'
+import { emptyDesignGraph, serializeDesignGraph } from '../design/design-graph'
 import { SddAssistantPanel } from './sdd/SddAssistantPanel'
 import { SddDraftEditorView } from './sdd/SddDraftEditorView'
 import { SidebarTitlebarToggleButton } from './sidebar/SidebarPrimitives'
@@ -2108,6 +2109,39 @@ export function Workbench(): ReactElement {
     openDesign()
   }
 
+  const createDesignGraph = (): void => {
+    const designWorkspaceRoot = useDesignWorkspaceStore.getState().workspaceRoot || workspaceRoot
+    if (!designWorkspaceRoot) {
+      setError(t('workspaceRequiredToCreateThread'))
+      return
+    }
+    const artifactId = createDesignArtifactId()
+    const createdAt = new Date().toISOString()
+    const relativePath = `.kun-design/${artifactId}/graph.json`
+    void (async () => {
+      try {
+        await window.kunGui.writeWorkspaceFile({
+          path: relativePath,
+          workspaceRoot: designWorkspaceRoot,
+          content: serializeDesignGraph(emptyDesignGraph())
+        })
+      } catch {
+        // non-fatal: the editor creates it on first save
+      }
+      const store = useDesignWorkspaceStore.getState()
+      store.setWorkspaceRoot(designWorkspaceRoot)
+      store.upsertArtifact({
+        id: artifactId,
+        kind: 'graph',
+        title: t('designGraphTitle'),
+        relativePath,
+        createdAt,
+        updatedAt: createdAt,
+        versions: [{ id: `${artifactId}-v1`, relativePath, createdAt, summary: '' }]
+      })
+    })()
+  }
+
   const sendDesignTurn = (brief: string): void => {
     const text = brief.trim()
     if (!text) return
@@ -2582,6 +2616,7 @@ export function Workbench(): ReactElement {
                 onWriteOpen={openWriteMode}
                 onDesignOpen={openDesignMode}
                 onImplement={implementDesignInCode}
+                onNewGraph={createDesignGraph}
               />
             ) : route === 'write' ? (
               <WriteSidebar
