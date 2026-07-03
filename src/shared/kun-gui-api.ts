@@ -105,6 +105,10 @@ import type {
 } from './write-export'
 import type { DesignExportPayload, DesignExportResult } from './design-export'
 import type {
+  MemoryMarkdownExportSavePayload,
+  MemoryMarkdownExportSaveResult
+} from './memory-import-export'
+import type {
   TerminalCreatePayload,
   TerminalCreateResult,
   TerminalDataPayload,
@@ -526,6 +530,7 @@ export type KunGuiApi = {
   listWriteInlineCompletionDebugEntries: () => Promise<WriteInlineCompletionDebugEntry[]>
   clearWriteInlineCompletionDebugEntries: () => Promise<boolean>
   exportWriteDocument: (payload: WriteExportPayload) => Promise<WriteExportResult>
+  exportMemoryMarkdown: (payload: MemoryMarkdownExportSavePayload) => Promise<MemoryMarkdownExportSaveResult>
   exportDesignPrototype: (payload: DesignExportPayload) => Promise<DesignExportResult>
   copyWriteDocumentAsRichText: (
     payload: WriteRichClipboardPayload

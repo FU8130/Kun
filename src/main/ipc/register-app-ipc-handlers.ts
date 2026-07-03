@@ -91,6 +91,7 @@ import {
   localWhisperSourceStatusPayloadSchema,
   speechTranscribePayloadSchema,
   writeExportPayloadSchema,
+  memoryMarkdownExportPayloadSchema,
   designExportPayloadSchema,
   writeRichClipboardPayloadSchema,
   writeInfographicPayloadSchema,
@@ -202,6 +203,7 @@ import {
   exportDesignPrototype,
   exportWriteDocument
 } from '../services/write-export-service'
+import { exportMemoryMarkdown } from '../services/memory-export-service'
 import { importGithubSkillsToRoot } from '../services/github-skill-import-service'
 import { readLocalPdfText } from '../services/write-pdf-text-service'
 import { saveGuiSkillPackage } from '../services/skill-save-service'
@@ -1389,6 +1391,12 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle('write:export', async (_, payload: unknown) =>
     exportWriteDocument(
       parseIpcPayload('write:export', writeExportPayloadSchema, payload),
+      { parentWindow: getMainWindow() }
+    )
+  )
+  ipcMain.handle('memory:export-markdown', async (_, payload: unknown) =>
+    exportMemoryMarkdown(
+      parseIpcPayload('memory:export-markdown', memoryMarkdownExportPayloadSchema, payload),
       { parentWindow: getMainWindow() }
     )
   )

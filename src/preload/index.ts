@@ -195,6 +195,8 @@ const api = {
   },
   exportWriteDocument: (payload) =>
     ipcRenderer.invoke('write:export', payload),
+  exportMemoryMarkdown: (payload) =>
+    ipcRenderer.invoke('memory:export-markdown', payload),
   exportDesignPrototype: (payload) =>
     ipcRenderer.invoke('design:export-prototype', payload),
   copyWriteDocumentAsRichText: (payload) =>

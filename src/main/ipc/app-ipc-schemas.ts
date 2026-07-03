@@ -1668,6 +1668,13 @@ export const writeExportPayloadSchema = z
     message: 'An export path or title is required.'
   })
 
+export const memoryMarkdownExportPayloadSchema = z
+  .object({
+    markdown: z.string().max(MAX_BODY_BYTES),
+    defaultFileName: optionalTrimmedString(200)
+  })
+  .strict()
+
 export const designExportPayloadSchema = z
   .object({
     path: trimmedString(MAX_PATH_LENGTH),

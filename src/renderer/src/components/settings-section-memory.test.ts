@@ -24,6 +24,33 @@ const labels: Record<string, string> = {
   memoryOff: 'Off',
   memoryRecords: 'Memory records',
   memoryRecordsDesc: 'Memory records description',
+  memoryImport: 'Import',
+  memoryExport: 'Export',
+  memoryExported: 'Memory exported',
+  memoryExportUnavailable: 'Export unavailable',
+  memoryImportTitle: 'Import Memory into Kun',
+  memoryImportStepPrompt: 'Copy prompt',
+  memoryImportCopy: 'Copy',
+  memoryImportCopied: 'Copied',
+  memoryImportStepPaste: 'Paste result',
+  memoryImportPastePlaceholder: 'Paste memory details',
+  memoryImportTargetPathPlaceholder: 'Workspace or project path',
+  memoryImportUserScopeHint: 'User memories are global.',
+  memoryImportTargetRequired: 'Path required.',
+  memoryImportParsedPrefix: 'Will import ',
+  memoryImportParsedSuffix: ' item(s)',
+  memoryImportMorePrefix: 'Plus ',
+  memoryImportMoreSuffix: ' more',
+  memoryImportAdd: 'Add to memory',
+  memoryImporting: 'Adding...',
+  memoryImportedPrefix: 'Imported ',
+  memoryImportedSuffix: ' memory item(s).',
+  memoryImportPartialPrefix: 'Imported ',
+  memoryImportPartialMiddle: ' item(s), failed ',
+  memoryImportPartialSuffix: '.',
+  memoryImportSkippedPrefix: 'Skipped ',
+  memoryImportSkippedSuffix: ' duplicate memory item(s).',
+  memoryImportAllDuplicate: 'No new memories to import.',
   memoryDisabledHint: 'Memory disabled',
   memoryScope_all: 'All',
   memoryScope_user: 'User',
@@ -37,6 +64,7 @@ const labels: Record<string, string> = {
   memoryConfidence: 'Confidence',
   memoryCancel: 'Cancel',
   memorySave: 'Save',
+  memorySaveFailed: 'Memory save failed',
   memoryEmpty: 'No memory records',
   memoryEdit: 'Edit',
   memoryDetails: 'Details',
@@ -117,6 +145,16 @@ describe('MemorySettingsSection', () => {
     expect(html).toContain('Project')
     expect(html).toContain(projectPath)
     expect(html).toContain('project-overview')
+  })
+
+  it('renders import and export actions in the memory toolbar', () => {
+    const html = renderToStaticMarkup(createElement(MemorySettingsSection, {
+      ctx: baseCtx()
+    }))
+
+    expect(html).toContain('Import')
+    expect(html).toContain('Export')
+    expect(html).toContain('New')
   })
 
   it('truncates long memory content in the default list view body (not in the title attribute)', () => {
@@ -239,15 +277,15 @@ describe('isMemoryDraftDirty', () => {
 
   it('returns false in create mode for an empty draft on the default scope', () => {
     const dialog: MemoryDialogState = { mode: 'create' }
-    const draft: MemoryDraft = { content: '   ', scope: 'workspace', targetPath: '', tags: '   ', confidence: 1 }
+    const draft: MemoryDraft = { content: '   ', scope: 'user', targetPath: '', tags: '   ', confidence: 1 }
     expect(isMemoryDraftDirty(dialog, draft)).toBe(false)
   })
 
   it('returns true in create mode when any field changes from the empty default', () => {
     const dialog: MemoryDialogState = { mode: 'create' }
-    expect(isMemoryDraftDirty(dialog, { content: 'hello', scope: 'workspace', targetPath: '', tags: '', confidence: 1 })).toBe(true)
-    expect(isMemoryDraftDirty(dialog, { content: '', scope: 'workspace', targetPath: '', tags: 'tag', confidence: 1 })).toBe(true)
-    expect(isMemoryDraftDirty(dialog, { content: '', scope: 'user', targetPath: '', tags: '', confidence: 1 })).toBe(true)
+    expect(isMemoryDraftDirty(dialog, { content: 'hello', scope: 'user', targetPath: '', tags: '', confidence: 1 })).toBe(true)
+    expect(isMemoryDraftDirty(dialog, { content: '', scope: 'user', targetPath: '', tags: 'tag', confidence: 1 })).toBe(true)
+    expect(isMemoryDraftDirty(dialog, { content: '', scope: 'workspace', targetPath: '', tags: '', confidence: 1 })).toBe(true)
   })
 })
 
