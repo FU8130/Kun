@@ -47,7 +47,6 @@ import { resolveWriteAgentPreset } from '../../write/agent-presets'
 import type { WriteEditorSelectionState, WriteMarkdownEditorHandle } from './WriteMarkdownEditor'
 import {
   INLINE_EDIT_RECENT_CONTEXT_CHARS,
-  WRITE_AUTOSAVE_MS,
   WRITE_EXPORT_NOTICE_MS,
   writePreviewDebounceMs,
   WRITE_RICH_CLIPBOARD_ACTION,
@@ -85,6 +84,8 @@ export function WriteWorkspaceView({
     workspaceRoot,
     activeFilePath,
     activeFileKind,
+    autoSaveEnabled,
+    autoSaveDelayMs,
     rootDirectory,
     inlineCompletion,
     inlineCompletionApiReady,
@@ -131,6 +132,8 @@ export function WriteWorkspaceView({
       workspaceRoot: s.workspaceRoot,
       activeFilePath: s.activeFilePath,
       activeFileKind: s.activeFileKind,
+      autoSaveEnabled: s.autoSaveEnabled,
+      autoSaveDelayMs: s.autoSaveDelayMs,
       rootDirectory: s.rootDirectory,
       inlineCompletion: s.inlineCompletion,
       inlineCompletionApiReady: s.inlineCompletionApiReady,
@@ -175,6 +178,7 @@ export function WriteWorkspaceView({
     }))
   )
   const saveTimerRef = useRef<number | null>(null)
+  const autoSaveEnabledRef = useRef(autoSaveEnabled)
   const exportMenuRef = useRef<HTMLDivElement | null>(null)
   const modeMenuRef = useRef<HTMLDivElement | null>(null)
   const editorPaneRef = useRef<HTMLDivElement | null>(null)
@@ -237,6 +241,8 @@ export function WriteWorkspaceView({
       ? t('writeLargeFileSafeMode')
       : ''
   const fileGuardDetail = renderSafety.notice === 'large-file' ? t('writeLargeFileSafeModeSub') : ''
+
+  autoSaveEnabledRef.current = autoSaveEnabled
 
   useWriteSplitScrollSync({
     enabled: workspaceReady && previewMode === 'split' && activeFileIsText,
@@ -849,18 +855,18 @@ export function WriteWorkspaceView({
       window.clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
     }
-    if (saveStatus !== 'dirty' || !workspaceReady || !activeFileIsText || renderSafety.readOnly || reviewActive) return
+    if (!autoSaveEnabled || saveStatus !== 'dirty' || !workspaceReady || !activeFileIsText || renderSafety.readOnly || reviewActive) return
     saveTimerRef.current = window.setTimeout(() => {
       saveTimerRef.current = null
       void flushSave(workspaceRoot)
-    }, WRITE_AUTOSAVE_MS)
+    }, autoSaveDelayMs)
     return () => {
       if (saveTimerRef.current) {
         window.clearTimeout(saveTimerRef.current)
         saveTimerRef.current = null
       }
     }
-  }, [flushSave, saveStatus, workspaceReady, workspaceRoot, fileContent, activeFileIsText, renderSafety.readOnly, reviewActive])
+  }, [autoSaveDelayMs, autoSaveEnabled, flushSave, saveStatus, workspaceReady, workspaceRoot, fileContent, activeFileIsText, renderSafety.readOnly, reviewActive])
 
   useEffect(() => () => {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
@@ -868,7 +874,7 @@ export function WriteWorkspaceView({
       window.clearTimeout(exportNoticeTimerRef.current)
       exportNoticeTimerRef.current = null
     }
-    void useWriteWorkspaceStore.getState().flushSave(workspaceRoot)
+    if (autoSaveEnabledRef.current) void useWriteWorkspaceStore.getState().flushSave(workspaceRoot)
   }, [workspaceRoot])
 
   useEffect(() => {

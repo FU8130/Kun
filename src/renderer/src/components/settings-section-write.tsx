@@ -4,7 +4,10 @@ import {
   DEFAULT_WRITE_INLINE_COMPLETION_MAX_TOKENS,
   DEFAULT_WRITE_INLINE_COMPLETION_MODEL,
   DEFAULT_WRITE_INLINE_LONG_COMPLETION_MAX_TOKENS,
+  DEFAULT_WRITE_AUTOSAVE_DELAY_MS,
   DEFAULT_MODEL_PROVIDER_ID,
+  MAX_WRITE_AUTOSAVE_DELAY_MS,
+  MIN_WRITE_AUTOSAVE_DELAY_MS,
   WRITE_EDITOR_FONT_SIZE_MAX,
   WRITE_EDITOR_FONT_SIZE_MIN,
   WRITE_EDITOR_LINE_HEIGHT_MAX,
@@ -81,6 +84,9 @@ export function WriteSettingsSection({ ctx }: { ctx: Record<string, any> }): Rea
   const selectionAssist = form.write.selectionAssist ?? defaultWriteSelectionAssistSettings()
   const typography = form.write.typography ?? defaultWriteTypography()
   const agentPresets: WriteAgentPresetV1[] = form.write.agentPresets ?? defaultWriteAgentPresets()
+  const autoSaveDelaySeconds = Math.round(
+    (form.write.autoSaveDelayMs ?? DEFAULT_WRITE_AUTOSAVE_DELAY_MS) / 1000
+  )
   const updateAgentPresets = (next: WriteAgentPresetV1[]): void => {
     update({ write: { agentPresets: next } })
   }
@@ -148,6 +154,37 @@ export function WriteSettingsSection({ ctx }: { ctx: Record<string, any> }): Rea
                         </p>
                       ) : null}
                     </div>
+                  }
+                />
+                <SettingRow
+                  title={t('writeAutoSave')}
+                  description={t('writeAutoSaveDesc')}
+                  control={
+                    <Toggle
+                      checked={form.write.autoSaveEnabled !== false}
+                      onChange={(autoSaveEnabled) => update({ write: { autoSaveEnabled } })}
+                    />
+                  }
+                />
+                <SettingRow
+                  title={t('writeAutoSaveDelay')}
+                  description={t('writeAutoSaveDelayDesc', {
+                    min: MIN_WRITE_AUTOSAVE_DELAY_MS / 1000,
+                    max: MAX_WRITE_AUTOSAVE_DELAY_MS / 60_000
+                  })}
+                  control={
+                    <input
+                      type="number"
+                      min={MIN_WRITE_AUTOSAVE_DELAY_MS / 1000}
+                      max={MAX_WRITE_AUTOSAVE_DELAY_MS / 1000}
+                      step={5}
+                      className="w-32 rounded-xl border border-ds-border bg-ds-card px-3 py-2 text-[14px] text-ds-ink shadow-sm focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-60"
+                      value={autoSaveDelaySeconds}
+                      disabled={form.write.autoSaveEnabled === false}
+                      onChange={(e) => update({
+                        write: { autoSaveDelayMs: Number(e.target.value) * 1000 }
+                      })}
+                    />
                   }
                 />
               </SettingsCard>

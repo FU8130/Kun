@@ -130,6 +130,9 @@ export const DEFAULT_WRITE_INLINE_COMPLETION_MAX_TOKENS = 96
 export const DEFAULT_WRITE_INLINE_LONG_COMPLETION_DEBOUNCE_MS = 2_800
 export const DEFAULT_WRITE_INLINE_LONG_COMPLETION_MIN_ACCEPT_SCORE = 0.36
 export const DEFAULT_WRITE_INLINE_LONG_COMPLETION_MAX_TOKENS = 256
+export const MIN_WRITE_AUTOSAVE_DELAY_MS = 5_000
+export const MAX_WRITE_AUTOSAVE_DELAY_MS = 1_800_000
+export const DEFAULT_WRITE_AUTOSAVE_DELAY_MS = 180_000
 export const DEFAULT_KUN_PORT = 18899
 export const DEFAULT_LOG_RETENTION_DAYS = 3
 export const CHECKPOINT_CLEANUP_INTERVAL_DAYS = [1, 2, 3, 5, 10] as const
@@ -1708,6 +1711,8 @@ export type WriteSettingsV1 = {
   defaultWorkspaceRoot: string
   activeWorkspaceRoot: string
   workspaces: string[]
+  autoSaveEnabled: boolean
+  autoSaveDelayMs: number
   inlineCompletion: WriteInlineCompletionSettingsV1
   selectionAssist: WriteSelectionAssistSettingsV1
   typography: WriteTypographySettingsV1

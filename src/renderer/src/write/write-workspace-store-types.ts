@@ -11,6 +11,8 @@ export type WriteActiveFileKind = 'text' | 'image' | 'pdf'
 export type WriteWorkspaceState = {
   defaultWorkspaceRoot: string
   workspaceRoots: string[]
+  autoSaveEnabled: boolean
+  autoSaveDelayMs: number
   inlineCompletion: WriteInlineCompletionSettingsV1
   inlineCompletionApiReady: boolean
   /** Selection toolbar AI assists: quick action prompts + infographic prompt. */

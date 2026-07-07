@@ -3,7 +3,6 @@ import type { WriteExportFormat } from '@shared/write-export'
 import type { WritePreviewMode, WriteSaveStatus } from '../../write/write-workspace-store'
 import { parseWriteMarkdown } from '../../write/tiptap/markdown-manager'
 
-export const WRITE_AUTOSAVE_MS = 900
 export const WRITE_PREVIEW_DEBOUNCE_MS = 60
 
 /**

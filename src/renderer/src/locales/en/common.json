@@ -2154,6 +2154,7 @@
   "writeReadOnly": "Read-only",
   "writeSaveError": "Save failed",
   "writeReadOnlySaveDisabled": "This file is read-only, so saving is disabled",
+  "writeDiscardUnsavedChangesConfirm": "The current file has unsaved changes. Discard them and continue?",
   "planPanelTitle": "Plan",
   "planNoActiveFile": "No plan file selected",
   "planNoWorkspace": "Choose a working directory first.",

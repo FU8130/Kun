@@ -2154,6 +2154,7 @@
   "writeReadOnly": "只读",
   "writeSaveError": "保存失败",
   "writeReadOnlySaveDisabled": "当前文件只读，已禁用保存",
+  "writeDiscardUnsavedChangesConfirm": "当前文件有未保存的修改。要放弃这些修改并继续吗？",
   "planPanelTitle": "计划",
   "planNoActiveFile": "未选择计划文件",
   "planNoWorkspace": "请先选择工作目录。",

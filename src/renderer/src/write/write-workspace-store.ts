@@ -4,6 +4,7 @@ import {
   DEFAULT_WRITE_INLINE_COMPLETION_MAX_TOKENS,
   DEFAULT_WRITE_INLINE_COMPLETION_MIN_ACCEPT_SCORE,
   DEFAULT_WRITE_INLINE_COMPLETION_MODEL,
+  DEFAULT_WRITE_AUTOSAVE_DELAY_MS,
   DEFAULT_WRITE_INLINE_LONG_COMPLETION_DEBOUNCE_MS,
   DEFAULT_WRITE_INLINE_LONG_COMPLETION_MAX_TOKENS,
   DEFAULT_WRITE_INLINE_LONG_COMPLETION_MIN_ACCEPT_SCORE,
@@ -57,6 +58,8 @@ function cancelExternalSyncAnimation(): void {
 export const useWriteWorkspaceStore = create<WriteWorkspaceState>((set, get) => ({
   defaultWorkspaceRoot: '',
   workspaceRoots: [],
+  autoSaveEnabled: true,
+  autoSaveDelayMs: DEFAULT_WRITE_AUTOSAVE_DELAY_MS,
   inlineCompletion: {
     enabled: true,
     retrievalEnabled: true,

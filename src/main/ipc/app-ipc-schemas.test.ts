@@ -219,6 +219,8 @@ describe('app-ipc-schemas', () => {
         }
       },
       write: {
+        autoSaveEnabled: false,
+        autoSaveDelayMs: 180000,
         inlineCompletion: {
           model: 'deepseek-v4-pro',
           maxTokens: 128
@@ -246,6 +248,8 @@ describe('app-ipc-schemas', () => {
     expect(payload.agents?.kun?.tokenEconomy?.historyHygiene?.maxToolResultTokens).toBe(4000)
     expect(payload.agents?.kun?.toolOutputLimits?.maxLines).toBe(30000)
     expect(payload.agents?.kun?.toolOutputLimits?.maxBytes).toBe(1048576)
+    expect(payload.write?.autoSaveEnabled).toBe(false)
+    expect(payload.write?.autoSaveDelayMs).toBe(180000)
     expect(payload.write?.inlineCompletion?.model).toBe('deepseek-v4-pro')
     expect(payload.write?.selectionAssist?.infographicPrompt).toBe('手绘风格信息图。')
     expect(payload.write?.selectionAssist?.quickActions).toHaveLength(2)

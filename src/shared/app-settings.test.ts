@@ -1434,6 +1434,23 @@ describe('write inline completion runtime config', () => {
 })
 
 describe('write selection assist settings', () => {
+  it('keeps write auto-save enabled by default and preserves explicit opt-out', () => {
+    expect(defaultWriteSettings().autoSaveEnabled).toBe(true)
+    expect(defaultWriteSettings().autoSaveDelayMs).toBe(180_000)
+    expect(normalizeWriteSettings({}).autoSaveEnabled).toBe(true)
+    expect(normalizeWriteSettings({ autoSaveEnabled: false }).autoSaveEnabled).toBe(false)
+    expect(normalizeWriteSettings({ autoSaveDelayMs: 30_000 }).autoSaveDelayMs).toBe(30_000)
+    expect(normalizeWriteSettings({ autoSaveDelayMs: 1 }).autoSaveDelayMs).toBe(5_000)
+    expect(normalizeWriteSettings({ autoSaveDelayMs: 3_600_000 }).autoSaveDelayMs).toBe(1_800_000)
+
+    const next = mergeWriteSettings(defaultWriteSettings(), {
+      autoSaveEnabled: false,
+      autoSaveDelayMs: 120_000
+    })
+    expect(next.autoSaveEnabled).toBe(false)
+    expect(next.autoSaveDelayMs).toBe(120_000)
+  })
+
   it('defaults to the built-in quick actions with empty overrides', () => {
     const write = defaultWriteSettings()
     expect(write.selectionAssist.infographicPrompt).toBe('')
