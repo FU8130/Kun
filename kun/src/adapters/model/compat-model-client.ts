@@ -91,6 +91,8 @@ type AnthropicMessage = {
   content: string | AnthropicContentBlock[]
 }
 
+const CODEX_NATIVE_IMAGE_GENERATION_MODELS = new Set(['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'])
+
 type ChatCompletionResponse = {
   id: string
   model: string
@@ -634,7 +636,7 @@ export class CompatModelClient implements ModelClient {
         parameters: tool.inputSchema
       }))
     }
-    if (this.isCodexEndpoint()) {
+    if (this.isCodexEndpoint() && codexModelSupportsNativeImageGeneration(model)) {
       const toolsArray = (body.tools ?? []) as Record<string, unknown>[]
       toolsArray.push({ type: 'image_generation' })
       body.tools = toolsArray
@@ -1664,6 +1666,10 @@ function normalizeToolSpecs(tools: ModelToolSpec[]): ModelToolSpec[] {
       inputSchema: canonicalizeSchema(tool.inputSchema)
     }))
     .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function codexModelSupportsNativeImageGeneration(model: string): boolean {
+  return CODEX_NATIVE_IMAGE_GENERATION_MODELS.has(normalizeModelId(model))
 }
 
 function messagesToResponsesInput(messages: ChatMessage[]): Array<Record<string, unknown>> {
