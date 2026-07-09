@@ -670,6 +670,61 @@ describe('user input mapping', () => {
     })
   })
 
+  it('maps multi-select questions and submitted answers from user-input items', () => {
+    const item: CoreTurnItemJson = {
+      id: 'item_input_multi',
+      turnId: 'turn_1',
+      threadId: 'thr_1',
+      role: 'tool',
+      status: 'submitted',
+      createdAt: '2024-01-01T00:00:00.000Z',
+      kind: 'user_input',
+      inputId: 'input_multi',
+      prompt: 'Pick requirements',
+      questions: [
+        {
+          header: 'Requirements',
+          id: 'reqs',
+          question: 'Pick requirements',
+          selectionMode: 'multiple',
+          minSelections: 2,
+          maxSelections: 3,
+          options: [
+            { label: 'Keep ratio', description: '' },
+            { label: 'App icon', description: '' }
+          ]
+        }
+      ],
+      answers: [
+        {
+          id: 'reqs',
+          label: 'Keep ratio, App icon',
+          value: 'Keep ratio, App icon',
+          labels: ['Keep ratio', 'App icon'],
+          values: ['Keep ratio', 'App icon']
+        }
+      ]
+    }
+    expect(chatBlockFromItem(item)).toMatchObject({
+      kind: 'user_input',
+      status: 'submitted',
+      questions: [
+        {
+          id: 'reqs',
+          selectionMode: 'multiple',
+          minSelections: 2,
+          maxSelections: 3
+        }
+      ],
+      answers: [
+        {
+          id: 'reqs',
+          values: ['Keep ratio', 'App icon']
+        }
+      ]
+    })
+  })
+
   it('surfaces structured user-input requests from runtime events', async () => {
     let request: unknown = null
     const sink: ThreadEventSink = {
@@ -706,6 +761,46 @@ describe('user input mapping', () => {
           id: 'mode',
           question: 'Choose',
           options: [{ label: 'Fast', description: 'Use the faster path' }]
+        }
+      ]
+    })
+  })
+
+  it('surfaces submitted user-input answers from runtime events', async () => {
+    let status: unknown = null
+    const sink: ThreadEventSink = {
+      ...makeSink(),
+      onUserInputStatus: (payload) => {
+        status = payload
+      }
+    }
+    await dispatchKunRuntimeEvent(
+      {
+        kind: 'user_input_resolved',
+        seq: 9,
+        itemId: 'item_input_3',
+        inputId: 'input_3',
+        status: 'submitted',
+        answers: [
+          {
+            id: 'reqs',
+            label: 'Keep ratio, App icon',
+            value: 'Keep ratio, App icon',
+            labels: ['Keep ratio', 'App icon'],
+            values: ['Keep ratio', 'App icon']
+          }
+        ]
+      },
+      sink,
+      async () => undefined
+    )
+    expect(status).toMatchObject({
+      itemId: 'item_input_3',
+      status: 'submitted',
+      answers: [
+        {
+          id: 'reqs',
+          values: ['Keep ratio', 'App icon']
         }
       ]
     })

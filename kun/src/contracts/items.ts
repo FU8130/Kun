@@ -31,16 +31,27 @@ export const TurnItemBase = z.object({
   finishedAt: z.string().optional()
 })
 
-const UserInputOptionSchema = z.object({
+export const UserInputOptionSchema = z.object({
   label: z.string().min(1),
   description: z.string()
 })
 
-const UserInputQuestionSchema = z.object({
+export const UserInputQuestionSchema = z.object({
   header: z.string().min(1),
   id: z.string().min(1),
   question: z.string().min(1),
-  options: z.array(UserInputOptionSchema)
+  options: z.array(UserInputOptionSchema),
+  selectionMode: z.enum(['single', 'multiple']).optional(),
+  minSelections: z.number().int().positive().optional(),
+  maxSelections: z.number().int().positive().optional()
+})
+
+export const UserInputAnswerSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  value: z.string().default(''),
+  labels: z.array(z.string().min(1)).optional(),
+  values: z.array(z.string()).optional()
 })
 
 export const UserFileReferenceSchema = z.object({
@@ -111,6 +122,7 @@ export const UserInputTurnItem = TurnItemBase.extend({
   inputId: z.string().min(1),
   prompt: z.string(),
   questions: z.array(UserInputQuestionSchema).default([]),
+  answers: z.array(UserInputAnswerSchema).optional(),
   status: z.enum(['pending', 'submitted', 'cancelled'])
 })
 export type UserInputTurnItem = z.infer<typeof UserInputTurnItem>

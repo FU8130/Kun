@@ -4,12 +4,7 @@ import { readJsonBody } from '../read-json-body.js'
 import { ERRORS } from './runtime-error.js'
 import type { UserInputGate } from '../../ports/user-input-gate.js'
 import type { RuntimeEventRecorder } from '../../services/runtime-event-recorder.js'
-
-const UserInputAnswerSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
-  value: z.string().default('')
-})
+import { UserInputAnswerSchema } from '../../contracts/items.js'
 
 const UserInputResolveRequest = z.object({
   answers: z.array(UserInputAnswerSchema).optional(),
@@ -46,7 +41,9 @@ export async function resolveUserInput(input: {
     itemId: pending.itemId,
     inputId: pending.id,
     status: resolution.status,
-    prompt: pending.prompt
+    prompt: pending.prompt,
+    questions: pending.questions,
+    ...(resolution.status === 'submitted' ? { answers: resolution.answers } : {})
   })
   return jsonResponse({
     inputId: input.inputId,

@@ -140,7 +140,7 @@ export function clearPendingClawFeishuMirrors(): void {
 
 export function buildFollowupMessageFromUserInput(
   questions: UserInputQuestion[],
-  answers: Array<{ id: string; label: string; value?: string }>
+  answers: Array<{ id: string; label: string; value?: string; values?: string[] }>
 ): string {
   const isZh = i18n.language.toLowerCase().startsWith('zh')
   const title = isZh
@@ -152,7 +152,14 @@ export function buildFollowupMessageFromUserInput(
   if (questions.length === 0 || answers.length === 0) {
     return noAnswerLabel
   }
-  const answerById = new Map<string, string>(answers.map((answer) => [answer.id, answer.value || answer.label]))
+  const answerById = new Map<string, string>(
+    answers.map((answer) => [
+      answer.id,
+      answer.values && answer.values.length > 0
+        ? answer.values.join(', ')
+        : answer.value || answer.label
+    ])
+  )
   const lines = [title]
   for (const question of questions) {
     const answerValue = answerById.get(question.id)

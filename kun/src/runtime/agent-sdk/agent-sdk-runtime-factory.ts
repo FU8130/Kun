@@ -199,7 +199,8 @@ export function createAgentSdkRuntime(deps: AgentSdkRuntimeFactoryDeps): AgentSd
       }
       await deps.turns.updateItem(threadId, item.id, {
         status: resolution.status,
-        finishedAt: nowIso()
+        finishedAt: nowIso(),
+        ...(resolution.status === 'submitted' ? { answers: resolution.answers } : {})
       } as Partial<TurnItem>)
       await deps.events.record({
         kind: 'user_input_resolved',
@@ -209,7 +210,8 @@ export function createAgentSdkRuntime(deps: AgentSdkRuntimeFactoryDeps): AgentSd
         inputId: input.id,
         status: resolution.status,
         prompt: input.prompt,
-        questions: input.questions
+        questions: input.questions,
+        ...(resolution.status === 'submitted' ? { answers: resolution.answers } : {})
       })
       return resolution
     }

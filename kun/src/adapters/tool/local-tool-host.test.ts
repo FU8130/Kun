@@ -122,4 +122,58 @@ describe('LocalToolHost approval policy', () => {
       output: { error: 'GUI user input is not available in this runtime context' }
     })
   })
+
+  it('normalizes structured multi-select user input questions', async () => {
+    const host = new LocalToolHost({ tools: [userInputTool] })
+    let captured: Parameters<NonNullable<ToolHostContext['awaitUserInput']>>[0] | null = null
+    const context = {
+      threadId: 'thread_1',
+      turnId: 'turn_1',
+      workspace: '/tmp/workspace',
+      approvalPolicy: 'auto',
+      sandboxMode: 'workspace-write',
+      abortSignal: new AbortController().signal,
+      awaitApproval: vi.fn(async () => 'allow' as const),
+      awaitUserInput: vi.fn(async (input) => {
+        captured = input
+        return { status: 'submitted' as const, answers: [] }
+      })
+    } satisfies ToolHostContext
+
+    await host.execute(
+      {
+        callId: 'call_input_multi',
+        toolName: 'user_input',
+        arguments: {
+          questions: [
+            {
+              id: 'requirements',
+              question: 'Pick requirements',
+              options: ['Keep ratio', 'App icon', 'Redesign outline'],
+              selectionMode: 'multiple',
+              minSelections: 4,
+              maxSelections: 2
+            }
+          ]
+        }
+      },
+      context
+    )
+
+    expect(captured?.questions).toEqual([
+      {
+        header: 'Question 1',
+        id: 'requirements',
+        question: 'Pick requirements',
+        options: [
+          { label: 'Keep ratio', description: '' },
+          { label: 'App icon', description: '' },
+          { label: 'Redesign outline', description: '' }
+        ],
+        selectionMode: 'multiple',
+        minSelections: 2,
+        maxSelections: 2
+      }
+    ])
+  })
 })

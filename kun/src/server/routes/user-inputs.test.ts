@@ -1,0 +1,67 @@
+import { describe, expect, it, vi } from 'vitest'
+import { InMemoryUserInputGate } from '../../adapters/in-memory-user-input-gate.js'
+import type { RuntimeEventRecorder } from '../../services/runtime-event-recorder.js'
+import { resolveUserInput } from './user-inputs.js'
+
+describe('resolveUserInput', () => {
+  it('accepts structured multi-select answers and records them on the resolved event', async () => {
+    const gate = new InMemoryUserInputGate()
+    const pending = gate.request({
+      id: 'input_1',
+      threadId: 'thread_1',
+      turnId: 'turn_1',
+      itemId: 'item_input_1',
+      prompt: 'Pick requirements',
+      questions: [
+        {
+          header: 'Requirements',
+          id: 'requirements',
+          question: 'Pick requirements',
+          options: [
+            { label: 'Keep ratio', description: '' },
+            { label: 'App icon', description: '' }
+          ],
+          selectionMode: 'multiple',
+          minSelections: 1,
+          maxSelections: 2
+        }
+      ]
+    })
+    const events = {
+      record: vi.fn(async (event) => event)
+    } as unknown as RuntimeEventRecorder
+    const answers = [
+      {
+        id: 'requirements',
+        label: 'Keep ratio, App icon',
+        value: 'Keep ratio, App icon',
+        labels: ['Keep ratio', 'App icon'],
+        values: ['Keep ratio', 'App icon']
+      }
+    ]
+
+    const response = await resolveUserInput({
+      inputId: 'input_1',
+      request: new Request('http://127.0.0.1/v1/user-inputs/input_1', {
+        method: 'POST',
+        body: JSON.stringify({ answers })
+      }),
+      gate,
+      events
+    })
+
+    expect(response.status).toBe(200)
+    await expect(pending).resolves.toEqual({ status: 'submitted', answers })
+    expect(events.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'user_input_resolved',
+        inputId: 'input_1',
+        status: 'submitted',
+        questions: expect.arrayContaining([
+          expect.objectContaining({ id: 'requirements', selectionMode: 'multiple' })
+        ]),
+        answers
+      })
+    )
+  })
+})

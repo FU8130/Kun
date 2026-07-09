@@ -2,7 +2,11 @@ import type { ReactElement } from 'react'
 import { Check, CornerDownLeft, HelpCircle, X } from 'lucide-react'
 import type { UserInputOption, UserInputQuestion } from '../../agent/types'
 import type { ComposerUserInputController } from './use-composer-user-input'
-import { optionsNeedRows, shouldShowQuestionHeader } from './user-input-panel-logic'
+import {
+  isMultipleChoiceQuestion,
+  optionsNeedRows,
+  shouldShowQuestionHeader
+} from './user-input-panel-logic'
 
 type Translate = (key: string, options?: Record<string, unknown>) => string
 
@@ -27,6 +31,7 @@ export function FloatingComposerUserInputPanel({
   const hasOptions = options.length > 0
   const useRows = optionsNeedRows(options)
   const showHeader = shouldShowQuestionHeader(currentQuestion, total)
+  const multipleChoice = isMultipleChoiceQuestion(currentQuestion)
 
   return (
     <div
@@ -88,7 +93,9 @@ export function FloatingComposerUserInputPanel({
               <OptionRow
                 key={option.label}
                 option={option}
+                multiple={multipleChoice}
                 selected={controller.isSelected(currentQuestion.id, option.label)}
+                disabled={controller.isOptionDisabled(currentQuestion, option)}
                 onSelect={() => controller.chooseOption(currentQuestion, option)}
               />
             ))}
@@ -99,7 +106,9 @@ export function FloatingComposerUserInputPanel({
               <OptionChip
                 key={option.label}
                 option={option}
+                multiple={multipleChoice}
                 selected={controller.isSelected(currentQuestion.id, option.label)}
+                disabled={controller.isOptionDisabled(currentQuestion, option)}
                 onSelect={() => controller.chooseOption(currentQuestion, option)}
               />
             ))}
@@ -113,9 +122,22 @@ export function FloatingComposerUserInputPanel({
       )}
 
       {hasOptions ? (
-        <div className="mt-2.5 flex items-center gap-1.5 text-[11.5px] text-ds-faint">
-          <CornerDownLeft className="h-3 w-3 shrink-0" strokeWidth={1.9} />
-          <span className="min-w-0">{t('userInputPanelCustomHint')}</span>
+        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-ds-faint">
+            <CornerDownLeft className="h-3 w-3 shrink-0" strokeWidth={1.9} />
+            <span className="min-w-0">{t('userInputPanelCustomHint')}</span>
+          </div>
+          {multipleChoice ? (
+            <button
+              type="button"
+              onClick={controller.confirmCurrentQuestion}
+              disabled={!controller.canConfirmCurrentQuestion}
+              className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-[10px] border border-accent/35 bg-accent px-3 py-1.5 text-[12.5px] font-semibold text-white shadow-sm transition hover:bg-accent/90 disabled:cursor-not-allowed disabled:border-ds-border-muted disabled:bg-ds-subtle disabled:text-ds-faint disabled:shadow-none"
+            >
+              <Check className="h-3.5 w-3.5" strokeWidth={2.2} />
+              <span>{t('confirm')}</span>
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -124,25 +146,35 @@ export function FloatingComposerUserInputPanel({
 
 function OptionChip({
   option,
+  multiple,
   selected,
+  disabled,
   onSelect
 }: {
   option: UserInputOption
+  multiple: boolean
   selected: boolean
+  disabled: boolean
   onSelect: () => void
 }): ReactElement {
   return (
     <button
       type="button"
       onClick={onSelect}
+      disabled={disabled}
+      aria-pressed={selected}
       title={option.description || undefined}
       className={`inline-flex min-w-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition ${
         selected
           ? 'border-accent/45 bg-accent/12 text-ds-ink'
-          : 'border-ds-border-muted bg-ds-card/80 text-ds-muted hover:border-ds-border hover:bg-ds-card hover:text-ds-ink'
+          : disabled
+            ? 'cursor-not-allowed border-ds-border-muted bg-ds-subtle text-ds-faint opacity-70'
+            : 'border-ds-border-muted bg-ds-card/80 text-ds-muted hover:border-ds-border hover:bg-ds-card hover:text-ds-ink'
       }`}
     >
-      {selected ? <Check className="h-3 w-3 shrink-0 text-accent" strokeWidth={2.4} /> : null}
+      {selected ? (
+        <Check className="h-3 w-3 shrink-0 text-accent" strokeWidth={multiple ? 2.2 : 2.4} />
+      ) : null}
       <span className="min-w-0 truncate">{option.label}</span>
     </button>
   )
@@ -150,29 +182,45 @@ function OptionChip({
 
 function OptionRow({
   option,
+  multiple,
   selected,
+  disabled,
   onSelect
 }: {
   option: UserInputOption
+  multiple: boolean
   selected: boolean
+  disabled: boolean
   onSelect: () => void
 }): ReactElement {
   return (
     <button
       type="button"
       onClick={onSelect}
+      disabled={disabled}
+      aria-pressed={selected}
       className={`group flex min-w-0 items-start gap-2.5 rounded-[14px] border px-3 py-2 text-left transition ${
         selected
           ? 'border-accent/40 bg-accent/10 text-ds-ink ring-1 ring-accent/10'
-          : 'border-ds-border-muted bg-ds-card/80 text-ds-muted hover:border-ds-border hover:bg-ds-card hover:text-ds-ink'
+          : disabled
+            ? 'cursor-not-allowed border-ds-border-muted bg-ds-subtle text-ds-faint opacity-70'
+            : 'border-ds-border-muted bg-ds-card/80 text-ds-muted hover:border-ds-border hover:bg-ds-card hover:text-ds-ink'
       }`}
     >
       <span
-        className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition ${
+        className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center border transition ${
+          multiple ? 'rounded-[4px]' : 'rounded-full'
+        } ${
           selected ? 'border-accent bg-accent/10' : 'border-ds-border group-hover:border-ds-muted'
         }`}
       >
-        {selected ? <span className="h-2 w-2 rounded-full bg-accent" /> : null}
+        {selected ? (
+          multiple ? (
+            <Check className="h-3 w-3 text-accent" strokeWidth={2.4} />
+          ) : (
+            <span className="h-2 w-2 rounded-full bg-accent" />
+          )
+        ) : null}
       </span>
       <span className="min-w-0">
         <span className="block break-words text-[13px] font-semibold [overflow-wrap:anywhere]">

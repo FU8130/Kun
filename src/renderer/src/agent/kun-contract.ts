@@ -463,6 +463,16 @@ export type CoreTurnItemJson = {
     id: string
     question: string
     options: Array<{ label: string; description: string }>
+    selectionMode?: 'single' | 'multiple'
+    minSelections?: number
+    maxSelections?: number
+  }>
+  answers?: Array<{
+    id: string
+    label: string
+    value?: string
+    labels?: string[]
+    values?: string[]
   }>
   summary?: string
   replacedTokens?: number
@@ -648,6 +658,16 @@ export type CoreRuntimeEventJson = {
     id: string
     question: string
     options: Array<{ label: string; description: string }>
+    selectionMode?: 'single' | 'multiple'
+    minSelections?: number
+    maxSelections?: number
+  }>
+  answers?: Array<{
+    id: string
+    label: string
+    value?: string
+    labels?: string[]
+    values?: string[]
   }>
   replacedTokens?: number
   auto?: boolean

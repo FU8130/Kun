@@ -18,7 +18,11 @@ import { AssistantMarkdown } from './AssistantMarkdown'
 import { ImagePreviewLightbox } from './ImagePreviewLightbox'
 import { ModelMetaTag, WritePromptMetaDisclosure } from './message-timeline-cards'
 import { readNumber, formatDuration, formatToolTitle, summarizeBackgroundShellToolBlock } from './message-timeline-tools'
-import { answersByQuestionId, shouldShowQuestionHeader } from './user-input-panel-logic'
+import {
+  answerDisplayValues,
+  answersByQuestionId,
+  shouldShowQuestionHeader
+} from './user-input-panel-logic'
 import { InjectedMemoryMetaChip } from './injected-memory-meta-chip'
 
 const COPY_FEEDBACK_RESET_MS = 1600
@@ -1412,7 +1416,8 @@ function UserInputBubble({
         {block.questions.map((question, index) => {
           const answer = answers[question.id]
           const hasOptions = question.options.length > 0
-          const submittedAnswer = done ? (answer?.value || answer?.label || '') : ''
+          const submittedValues = done ? answerDisplayValues(answer) : []
+          const submittedAnswer = submittedValues.join(', ')
           const showProgress = questionCount > 1
           const showHeader = shouldShowQuestionHeader(question, questionCount)
           return (
@@ -1451,14 +1456,27 @@ function UserInputBubble({
                 {question.question}
               </p>
 
-              {submittedAnswer ? (
+              {submittedValues.length > 0 ? (
                 <div className="mt-3 flex min-w-0 items-start gap-2 rounded-[10px] border border-emerald-500/14 bg-ds-card/78 px-3 py-2.5">
                   <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/12 text-emerald-700 dark:text-emerald-300">
                     <Check className="h-3.5 w-3.5" strokeWidth={2.1} />
                   </span>
-                  <span className="min-w-0 flex-1 break-words text-[13.5px] font-medium leading-5 text-ds-ink [overflow-wrap:anywhere]">
-                    {submittedAnswer}
-                  </span>
+                  {submittedValues.length > 1 ? (
+                    <span className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+                      {submittedValues.map((value) => (
+                        <span
+                          key={value}
+                          className="max-w-full rounded-full border border-emerald-500/16 bg-emerald-500/8 px-2 py-0.5 text-[12.5px] font-medium leading-5 text-ds-ink"
+                        >
+                          <span className="block truncate">{value}</span>
+                        </span>
+                      ))}
+                    </span>
+                  ) : (
+                    <span className="min-w-0 flex-1 break-words text-[13.5px] font-medium leading-5 text-ds-ink [overflow-wrap:anywhere]">
+                      {submittedAnswer}
+                    </span>
+                  )}
                 </div>
               ) : done ? (
                 <div className="mt-3 rounded-[10px] border border-ds-border-muted bg-ds-card/70 px-3 py-2 text-[12.5px] font-medium text-ds-muted">

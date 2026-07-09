@@ -1,5 +1,6 @@
 import type { TurnItem, UserMessageSource } from '../contracts/items.js'
 import type { ReviewOutput, ReviewTarget } from '../contracts/review.js'
+import type { UserInputQuestion } from '../ports/user-input-gate.js'
 
 export type ItemEntity = TurnItem
 
@@ -169,12 +170,7 @@ export function makeUserInputItem(input: {
   threadId: string
   inputId: string
   prompt: string
-  questions?: Array<{
-    header: string
-    id: string
-    question: string
-    options: Array<{ label: string; description: string }>
-  }>
+  questions?: UserInputQuestion[]
 }): TurnItem {
   return {
     id: input.id,

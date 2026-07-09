@@ -5,6 +5,7 @@ import type {
   ToolCallLike,
   ToolExecutionUpdate
 } from '../../ports/tool-host.js'
+import type { UserInputQuestion } from '../../ports/user-input-gate.js'
 import type { ApprovalRequest } from '../../domain/approval.js'
 import { createApprovalRequest } from '../../domain/approval.js'
 import type { TurnItem } from '../../contracts/items.js'
@@ -485,6 +486,21 @@ function createUserInputTool(name: string): LocalTool {
           description: 'Optional answer choices for a single question. Use strings or {label, description} objects.',
           items: optionSchema
         },
+        selectionMode: {
+          type: 'string',
+          enum: ['single', 'multiple'],
+          description: 'Use "multiple" only when the user may choose more than one option.'
+        },
+        minSelections: {
+          type: 'integer',
+          minimum: 1,
+          description: 'Minimum required selections for a multiple-choice question.'
+        },
+        maxSelections: {
+          type: 'integer',
+          minimum: 1,
+          description: 'Maximum allowed selections for a multiple-choice question.'
+        },
         questions: {
           type: 'array',
           description: 'One to three structured questions. Each question may include answer options.',
@@ -497,6 +513,18 @@ function createUserInputTool(name: string): LocalTool {
               options: {
                 type: 'array',
                 items: optionSchema
+              },
+              selectionMode: {
+                type: 'string',
+                enum: ['single', 'multiple']
+              },
+              minSelections: {
+                type: 'integer',
+                minimum: 1
+              },
+              maxSelections: {
+                type: 'integer',
+                minimum: 1
               }
             },
             required: ['question']
@@ -540,17 +568,12 @@ function normalizeUserInputQuestions(
   args: Record<string, unknown>,
   fallbackId: string,
   fallbackPrompt: string
-): Array<{
-  header: string
-  id: string
-  question: string
-  options: Array<{ label: string; description: string }>
-}> {
+): UserInputQuestion[] {
   const rawQuestions = Array.isArray(args.questions) ? args.questions : null
   if (rawQuestions && rawQuestions.length > 0) {
     const questions = rawQuestions
       .map((question, index) => normalizeUserInputQuestion(question, index, fallbackId))
-      .filter((question) => question !== null)
+      .filter((question): question is UserInputQuestion => question !== null)
     if (questions.length > 0) return questions
   }
   const options = Array.isArray(args.options)
@@ -563,7 +586,8 @@ function normalizeUserInputQuestions(
       header: 'Input',
       id: String(args.id ?? fallbackId),
       question: fallbackPrompt,
-      options
+      options,
+      ...normalizeUserInputSelection(args, options.length)
     }
   ]
 }
@@ -572,12 +596,7 @@ function normalizeUserInputQuestion(
   value: unknown,
   index: number,
   fallbackId: string
-): {
-  header: string
-  id: string
-  question: string
-  options: Array<{ label: string; description: string }>
-} | null {
+): UserInputQuestion | null {
   if (!value || typeof value !== 'object') return null
   const raw = value as Record<string, unknown>
   const question = typeof raw.question === 'string' && raw.question.trim()
@@ -593,8 +612,34 @@ function normalizeUserInputQuestion(
     header: typeof raw.header === 'string' && raw.header.trim() ? raw.header.trim() : `Question ${index + 1}`,
     id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `${fallbackId}_${index + 1}`,
     question,
-    options
+    options,
+    ...normalizeUserInputSelection(raw, options.length)
   }
+}
+
+function normalizeUserInputSelection(
+  raw: Record<string, unknown>,
+  optionCount: number
+): Pick<UserInputQuestion, 'selectionMode' | 'minSelections' | 'maxSelections'> {
+  if (raw.selectionMode !== 'multiple' || optionCount === 0) {
+    return { selectionMode: 'single' }
+  }
+  const rawMax = positiveInteger(raw.maxSelections)
+  const maxSelections = rawMax === undefined ? undefined : Math.min(rawMax, optionCount)
+  const minCeiling = maxSelections ?? optionCount
+  const rawMin = positiveInteger(raw.minSelections)
+  const minSelections = Math.min(rawMin ?? 1, minCeiling)
+  return {
+    selectionMode: 'multiple',
+    minSelections,
+    ...(maxSelections !== undefined ? { maxSelections } : {})
+  }
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  const normalized = Math.floor(value)
+  return normalized > 0 ? normalized : undefined
 }
 
 function normalizeUserInputOption(

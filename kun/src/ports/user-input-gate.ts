@@ -2,6 +2,8 @@ export type UserInputAnswer = {
   id: string
   label: string
   value: string
+  labels?: string[]
+  values?: string[]
 }
 
 export type UserInputOption = {
@@ -14,6 +16,9 @@ export type UserInputQuestion = {
   id: string
   question: string
   options: UserInputOption[]
+  selectionMode?: 'single' | 'multiple'
+  minSelections?: number
+  maxSelections?: number
 }
 
 export type UserInputRequest = {

@@ -1,5 +1,10 @@
 import { z } from 'zod'
-import { TurnItem, UserMessageSource } from './items.js'
+import {
+  TurnItem,
+  UserInputAnswerSchema,
+  UserInputQuestionSchema,
+  UserMessageSource
+} from './items.js'
 import { ThreadGoalSchema, ThreadTodoListSchema } from './threads.js'
 import { UsageSnapshotSchema } from './usage.js'
 import { RuntimeErrorSeverity } from './errors.js'
@@ -155,19 +160,8 @@ export const UserInputEvent = RuntimeEventBase.extend({
   inputId: z.string().min(1),
   status: z.enum(['pending', 'submitted', 'cancelled']),
   prompt: z.string().optional(),
-  questions: z.array(
-    z.object({
-      header: z.string().min(1),
-      id: z.string().min(1),
-      question: z.string().min(1),
-      options: z.array(
-        z.object({
-          label: z.string().min(1),
-          description: z.string()
-        })
-      )
-    })
-  ).optional()
+  questions: z.array(UserInputQuestionSchema).optional(),
+  answers: z.array(UserInputAnswerSchema).optional()
 })
 export type UserInputEvent = z.infer<typeof UserInputEvent>
 

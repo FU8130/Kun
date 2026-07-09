@@ -16,7 +16,7 @@ import { DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX_MODE } from '../contracts/poli
 import type { ThreadStore } from '../ports/thread-store.js'
 import type { SessionStore } from '../ports/session-store.js'
 import type { ApprovalGate } from '../ports/approval-gate.js'
-import type { UserInputGate, UserInputResolution } from '../ports/user-input-gate.js'
+import type { UserInputGate, UserInputQuestion, UserInputResolution } from '../ports/user-input-gate.js'
 import type { UsageService } from '../services/usage-service.js'
 import type { TurnService } from '../services/turn-service.js'
 import type { RuntimeEventRecorder } from '../services/runtime-event-recorder.js'
@@ -2158,12 +2158,7 @@ export class AgentLoop {
       id: string
       itemId: string
       prompt: string
-      questions: Array<{
-        header: string
-        id: string
-        question: string
-        options: Array<{ label: string; description: string }>
-      }>
+      questions: UserInputQuestion[]
     },
     signal: AbortSignal
   ): Promise<UserInputResolution> {
@@ -2190,7 +2185,8 @@ export class AgentLoop {
     const resolution = await this.waitForUserInput(threadId, turnId, input, signal)
     await this.opts.turns.updateItem(threadId, item.id, {
       status: resolution.status,
-      finishedAt: this.opts.nowIso()
+      finishedAt: this.opts.nowIso(),
+      ...(resolution.status === 'submitted' ? { answers: resolution.answers } : {})
     } as Partial<TurnItem>)
     await this.opts.events.record({
       kind: 'user_input_resolved',
@@ -2200,7 +2196,8 @@ export class AgentLoop {
       inputId: input.id,
       status: resolution.status,
       prompt: input.prompt,
-      questions: input.questions
+      questions: input.questions,
+      ...(resolution.status === 'submitted' ? { answers: resolution.answers } : {})
     })
     return resolution
   }
@@ -2212,12 +2209,7 @@ export class AgentLoop {
       id: string
       itemId: string
       prompt: string
-      questions: Array<{
-        header: string
-        id: string
-        question: string
-        options: Array<{ label: string; description: string }>
-      }>
+      questions: UserInputQuestion[]
     },
     signal: AbortSignal
   ): Promise<UserInputResolution> {

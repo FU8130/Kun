@@ -18,6 +18,7 @@ import type {
   ThreadUsageSnapshot,
   ToolBlock,
   ToolEventPayload,
+  UserInputAnswer,
   UserInputQuestion
 } from './types'
 import { redactSecrets, redactSecretText } from '@shared/secret-redaction'
@@ -706,8 +707,17 @@ function normalizeUserInputQuestion(question: unknown): UserInputQuestion | null
     header: typeof raw.header === 'string' && raw.header.trim() ? raw.header.trim() : 'Input',
     id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : 'input',
     question: typeof raw.question === 'string' && raw.question.trim() ? raw.question.trim() : 'Input requested',
-    options
+    options,
+    selectionMode: raw.selectionMode === 'multiple' && options.length > 0 ? 'multiple' : 'single',
+    ...(positiveInteger(raw.minSelections) ? { minSelections: positiveInteger(raw.minSelections) } : {}),
+    ...(positiveInteger(raw.maxSelections) ? { maxSelections: positiveInteger(raw.maxSelections) } : {})
   }
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  const normalized = Math.floor(value)
+  return normalized > 0 ? normalized : undefined
 }
 
 function normalizeUserInputOption(option: unknown): UserInputQuestion['options'][number] | null {
@@ -718,6 +728,39 @@ function normalizeUserInputOption(option: unknown): UserInputQuestion['options']
   return {
     label,
     description: typeof raw.description === 'string' ? raw.description : ''
+  }
+}
+
+function userInputAnswersFromCore(
+  answers: CoreTurnItemJson['answers'] | CoreRuntimeEventJson['answers'] | undefined
+): UserInputAnswer[] | undefined {
+  if (!Array.isArray(answers)) return undefined
+  const normalized = answers
+    .map((answer) => normalizeUserInputAnswer(answer))
+    .filter((answer): answer is UserInputAnswer => answer !== null)
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function normalizeUserInputAnswer(answer: unknown): UserInputAnswer | null {
+  if (!answer || typeof answer !== 'object') return null
+  const raw = answer as Record<string, unknown>
+  const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : null
+  const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : null
+  if (!id || !label) return null
+  const labels = Array.isArray(raw.labels)
+    ? raw.labels
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => value.trim())
+    : undefined
+  const values = Array.isArray(raw.values)
+    ? raw.values.filter((value): value is string => typeof value === 'string')
+    : undefined
+  return {
+    id,
+    label,
+    value: typeof raw.value === 'string' ? raw.value : label,
+    ...(labels && labels.length > 0 ? { labels } : {}),
+    ...(values && values.length > 0 ? { values } : {})
   }
 }
 
@@ -805,17 +848,21 @@ function approvalBlockFromItem(item: CoreTurnItemJson, child?: CoreChildRuntimeM
 }
 
 function userInputBlockFromItem(item: CoreTurnItemJson): ChatBlock {
+  const answers = userInputAnswersFromCore(item.answers)
   return {
     kind: 'user_input',
     id: item.id,
     createdAt: itemCreatedAt(item),
     requestId: item.inputId ?? item.id,
     questions: userInputQuestionsFromItem(item),
+    ...(answers ? { answers } : {}),
     status:
       item.status === 'failed'
         ? 'error'
-        : item.status === 'completed'
+        : item.status === 'submitted' || item.status === 'completed'
           ? 'submitted'
+          : item.status === 'cancelled' || item.status === 'aborted'
+            ? 'cancelled'
           : 'pending'
   }
 }
@@ -1323,12 +1370,15 @@ export async function dispatchKunRuntimeEvent(
         })
       )
       return
-    case 'user_input_resolved':
+    case 'user_input_resolved': {
+      const answers = userInputAnswersFromCore(event.answers)
       sink.onUserInputStatus({
         itemId: event.itemId ?? event.inputId ?? `input_${event.seq ?? Date.now()}`,
-        status: event.status === 'cancelled' ? 'cancelled' : 'submitted'
+        status: event.status === 'cancelled' ? 'cancelled' : 'submitted',
+        ...(answers ? { answers } : {})
       })
       return
+    }
     case 'compaction_started':
       sink.onCompaction(compactionFromEvent(event, 'running'))
       return

@@ -10,8 +10,13 @@ import {
   answerFromOption,
   answerFromTypedText,
   answersByQuestionId,
+  isMultipleChoiceQuestion,
+  isQuestionAnswered,
   nextUnansweredIndex,
-  orderedAnswers
+  orderedAnswers,
+  questionMaxSelections,
+  selectedOptionValues,
+  toggleOptionAnswer
 } from './user-input-panel-logic'
 
 export type PendingUserInputBlock = Extract<ChatBlock, { kind: 'user_input' }>
@@ -41,8 +46,11 @@ export type ComposerUserInputController = {
   currentQuestion: UserInputQuestion | null
   answers: Record<string, UserInputAnswer>
   isSelected: (questionId: string, optionLabel: string) => boolean
+  isOptionDisabled: (question: UserInputQuestion, option: UserInputOption) => boolean
   isAnswered: (questionId: string) => boolean
   chooseOption: (question: UserInputQuestion, option: UserInputOption) => void
+  canConfirmCurrentQuestion: boolean
+  confirmCurrentQuestion: () => void
   /** Returns true when the text was consumed as the current question's answer. */
   submitTypedText: (text: string) => boolean
   goToIndex: (index: number) => void
@@ -73,12 +81,14 @@ export function useComposerUserInput(
   const total = questions.length
   const safeIndex = total > 0 ? Math.min(index, total - 1) : 0
   const currentQuestion = total > 0 ? questions[safeIndex] : null
+  const currentAnswer = currentQuestion ? answers[currentQuestion.id] : undefined
+  const canConfirmCurrentQuestion = currentQuestion
+    ? isQuestionAnswered(currentQuestion, currentAnswer)
+    : false
 
-  const applyAnswer = useCallback(
-    (answer: UserInputAnswer) => {
+  const advanceOrSubmit = useCallback(
+    (nextMap: Record<string, UserInputAnswer>) => {
       if (!block || resolvedRef.current) return
-      const nextMap = { ...answers, [answer.id]: answer }
-      setAnswers(nextMap)
       if (allAnswered(questions, nextMap)) {
         resolvedRef.current = true
         void resolveUserInput(block.id, {
@@ -89,15 +99,43 @@ export function useComposerUserInput(
       }
       setIndex((current) => nextUnansweredIndex(questions, nextMap, current))
     },
-    [answers, block, questions, resolveUserInput]
+    [block, questions, resolveUserInput]
+  )
+
+  const applyAnswer = useCallback(
+    (answer: UserInputAnswer) => {
+      if (!block || resolvedRef.current) return
+      const nextMap = { ...answers, [answer.id]: answer }
+      setAnswers(nextMap)
+      advanceOrSubmit(nextMap)
+    },
+    [advanceOrSubmit, answers, block]
   )
 
   const chooseOption = useCallback(
     (question: UserInputQuestion, option: UserInputOption) => {
+      if (isMultipleChoiceQuestion(question)) {
+        if (!block || resolvedRef.current) return
+        setAnswers((current) => {
+          const next = toggleOptionAnswer(question, current[question.id], option)
+          if (!next) {
+            const rest = { ...current }
+            delete rest[question.id]
+            return rest
+          }
+          return { ...current, [question.id]: next }
+        })
+        return
+      }
       applyAnswer(answerFromOption(question, option))
     },
-    [applyAnswer]
+    [applyAnswer, block]
   )
+
+  const confirmCurrentQuestion = useCallback(() => {
+    if (!currentQuestion || !canConfirmCurrentQuestion) return
+    advanceOrSubmit(answers)
+  }, [advanceOrSubmit, answers, canConfirmCurrentQuestion, currentQuestion])
 
   const submitTypedText = useCallback(
     (text: string): boolean => {
@@ -117,14 +155,29 @@ export function useComposerUserInput(
   const isSelected = useCallback(
     (questionId: string, optionLabel: string): boolean => {
       const answer = answers[questionId]
-      return Boolean(answer && answer.label === optionLabel && answer.value === optionLabel)
+      if (!answer) return false
+      return selectedOptionValues(answer).includes(optionLabel)
     },
     [answers]
   )
 
+  const isOptionDisabled = useCallback(
+    (question: UserInputQuestion, option: UserInputOption): boolean => {
+      if (!isMultipleChoiceQuestion(question)) return false
+      if (isSelected(question.id, option.label)) return false
+      const max = questionMaxSelections(question)
+      return max !== undefined && selectedOptionValues(answers[question.id]).length >= max
+    },
+    [answers, isSelected]
+  )
+
   const isAnswered = useCallback(
-    (questionId: string): boolean => Boolean(answers[questionId]),
-    [answers]
+    (questionId: string): boolean => {
+      const question = questions.find((candidate) => candidate.id === questionId)
+      if (!question) return Boolean(answers[questionId])
+      return isQuestionAnswered(question, answers[questionId])
+    },
+    [answers, questions]
   )
 
   return useMemo(
@@ -137,8 +190,11 @@ export function useComposerUserInput(
       currentQuestion,
       answers,
       isSelected,
+      isOptionDisabled,
       isAnswered,
       chooseOption,
+      canConfirmCurrentQuestion,
+      confirmCurrentQuestion,
       submitTypedText,
       goToIndex: setIndex,
       cancel
@@ -147,9 +203,12 @@ export function useComposerUserInput(
       answers,
       block,
       cancel,
+      canConfirmCurrentQuestion,
       chooseOption,
+      confirmCurrentQuestion,
       currentQuestion,
       isAnswered,
+      isOptionDisabled,
       isSelected,
       questions,
       safeIndex,

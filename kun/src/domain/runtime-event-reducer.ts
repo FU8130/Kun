@@ -355,6 +355,10 @@ function upsertUserInputFromEvent(
         status,
         ...(status !== 'pending' ? { finishedAt: event.timestamp } : {})
       }
+  if (item.kind === 'user_input') {
+    if (event.questions) item.questions = event.questions
+    if (event.answers) item.answers = event.answers
+  }
   upsertItem(projection, item, 'replace')
 }
 

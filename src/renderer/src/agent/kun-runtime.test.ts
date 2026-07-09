@@ -836,7 +836,15 @@ describe('KunRuntimeProvider', () => {
 
     const forked = await provider.forkThread('thr_parent')
     await provider.forkThread('thr_parent', { turnId: 'turn_1' })
-    await provider.submitUserInputResponse('input_1', [{ id: 'choice', label: 'Yes', value: 'yes' }])
+    await provider.submitUserInputResponse('input_1', [
+      {
+        id: 'choice',
+        label: 'Yes, Maybe',
+        value: 'Yes, Maybe',
+        labels: ['Yes', 'Maybe'],
+        values: ['Yes', 'Maybe']
+      }
+    ])
     await provider.cancelUserInput('input_2')
 
     expect(forked).toMatchObject({ id: 'thr_fork', forkedFromThreadId: 'thr_parent' })
@@ -849,7 +857,17 @@ describe('KunRuntimeProvider', () => {
     expect(runtimeRequest).toHaveBeenCalledWith(
       '/v1/user-inputs/input_1',
       'POST',
-      JSON.stringify({ answers: [{ id: 'choice', label: 'Yes', value: 'yes' }] })
+      JSON.stringify({
+        answers: [
+          {
+            id: 'choice',
+            label: 'Yes, Maybe',
+            value: 'Yes, Maybe',
+            labels: ['Yes', 'Maybe'],
+            values: ['Yes', 'Maybe']
+          }
+        ]
+      })
     )
     expect(runtimeRequest).toHaveBeenCalledWith(
       '/v1/user-inputs/input_2',
