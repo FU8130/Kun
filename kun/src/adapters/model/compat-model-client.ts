@@ -44,6 +44,7 @@ import {
   type CompatChatMessage
 } from './compat-request-codecs.js'
 import { decodeChatCompletionsStreamPayload } from './chat-completions-stream-decoder.js'
+import { decodeResponsesStreamPayload } from './responses-stream-decoder.js'
 
 export { redactUrlForLog } from './compat-http-diagnostics.js'
 
@@ -1106,107 +1107,18 @@ export class CompatModelClient implements ModelClient {
     model: string,
     budget: ModelStreamResourceBudget
   ): StreamPayloadResult {
-    const chunks: ModelStreamChunk[] = []
-    let sawText = sawTextDelta
-    let finishReason: string | null = null
-    let usage: UsageSnapshot | null = null
-    const type = recordString(payload, 'type')
-
-    const outputIndex = numericIndex(payload.output_index)
-    const item = recordValue(payload, 'item') ?? recordValue(payload, 'output_item')
-    if (item) {
-      const itemType = recordString(item, 'type')
-      if (itemType === 'image_generation_call') {
-        if (type === 'response.output_item.done') {
-          const result = recordString(item, 'result')
-          if (result) {
-            chunks.push({ kind: 'image_generation_complete', imageBase64: result, mimeType: 'image/png' })
-          }
-        }
-      } else if (itemType === 'function_call' || itemType === 'custom_tool_call') {
-        const callId = recordString(item, 'call_id') || recordString(item, 'id') || indexFallbackCallId(outputIndex, pendingArguments)
-        const existing = budget.pendingCall(pendingArguments, callId, outputIndex)
-        if (outputIndex !== undefined) {
-          budget.bindPendingIndex(pendingByIndex, outputIndex, callId)
-        }
-        const name = recordString(item, 'name')
-        if (name) existing.name = name
-        const initialArguments = recordString(item, 'arguments') || recordString(item, 'input')
-        if (initialArguments && existing.argumentBytes === 0) budget.replaceArguments(existing, initialArguments)
-        if (type === 'response.output_item.done' && existing.name) {
-          const argumentsRaw = budget.pendingArguments(existing)
-          budget.completeToolCall(argumentsRaw)
-          chunks.push({
-            kind: 'tool_call_complete',
-            callId,
-            toolName: existing.name,
-            arguments: this.parseToolArguments(argumentsRaw || '{}')
-          })
-          completedToolCalls.add(callId)
-          budget.removePendingCall(pendingArguments, callId)
-          if (existing.index !== undefined) pendingByIndex.delete(existing.index)
-        }
-      }
-    }
-
-    if (type === 'response.output_text.delta') {
-      const delta = recordString(payload, 'delta')
-      if (delta) {
-        sawText = true
-        chunks.push({ kind: 'assistant_text_delta', text: delta })
-      }
-    } else if (
-      type === 'response.reasoning_text.delta' ||
-      type === 'response.reasoning_summary_text.delta' ||
-      type === 'response.reasoning.delta'
-    ) {
-      const delta = recordString(payload, 'delta')
-      if (delta) {
-        chunks.push({ kind: 'assistant_reasoning_delta', text: delta })
-      }
-    } else if (type === 'response.function_call_arguments.delta') {
-      const callId = responseStreamCallId(payload, pendingArguments, pendingByIndex)
-      const existing = budget.pendingCall(pendingArguments, callId, outputIndex)
-      const delta = recordString(payload, 'delta')
-      if (outputIndex !== undefined) {
-        budget.bindPendingIndex(pendingByIndex, outputIndex, callId)
-      }
-      if (delta) {
-        budget.appendArguments(existing, delta)
-        chunks.push({
-          kind: 'tool_call_delta',
-          callId,
-          toolName: existing.name,
-          argumentsDelta: delta
-        })
-      }
-    } else if (type === 'response.function_call_arguments.done') {
-      const callId = responseStreamCallId(payload, pendingArguments, pendingByIndex)
-      const existing = budget.pendingCall(pendingArguments, callId, outputIndex)
-      const args = recordString(payload, 'arguments')
-      if (args) budget.replaceArguments(existing, args)
-    } else if (type === 'response.image_generation_call.partial_image') {
-      // Partial image data — accumulation is optional; we emit on output_item.done
-    } else if (type === 'response.completed') {
-      const response = recordValue(payload, 'response') as ResponsesApiResponse | null
-      const materialized = this.materializeResponsesOutput(response ?? (payload as ResponsesApiResponse), {
-        skipText: sawText,
-        pendingArguments,
-        completedToolCalls,
-        budget
-      }, model)
-      chunks.push(...materialized.chunks)
-      if (materialized.chunks.some((chunk) => chunk.kind === 'assistant_text_delta')) sawText = true
-      if (materialized.usage) usage = materialized.usage
-      finishReason = materialized.finishReason
-    } else if (type === 'response.failed' || type === 'error') {
-      const message = responseErrorMessage(payload)
-      chunks.push({ kind: 'error', message, code: 'response_stream_error' })
-      finishReason = 'error'
-    }
-    return { chunks, sawTextDelta: sawText, finishReason, usage }
+    return decodeResponsesStreamPayload({
+      payload,
+      pendingArguments,
+      pendingByIndex,
+      completedToolCalls,
+      sawTextDelta,
+      budget,
+      parseToolArguments: (raw) => this.parseToolArguments(raw),
+      materializeCompleted: (response, options) =>
+        this.materializeResponsesOutput(response as ResponsesApiResponse, options, model)
+    })
   }
-
   private consumeAnthropicMessagesStreamPayload(
     payload: Record<string, unknown>,
     pendingArguments: Map<string, PendingToolCall>,
