@@ -1021,12 +1021,12 @@ export class CompatModelClient implements ModelClient {
         const { value, done } = read
         if (done) break
         buffer += decoder.decode(value, { stream: true })
-        let boundary: number
-        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
-          const frame = buffer.slice(0, boundary)
-          buffer = buffer.slice(boundary + 2)
+        let boundary: RegExpExecArray | null
+        while ((boundary = /\r?\n\r?\n/.exec(buffer)) !== null) {
+          const frame = buffer.slice(0, boundary.index)
+          buffer = buffer.slice(boundary.index + boundary[0].length)
           const dataLines = frame
-            .split('\n')
+            .split(/\r?\n/)
             .filter((line) => line.startsWith('data:'))
             .map((line) => line.slice(5).trim())
             .join('')
@@ -1040,7 +1040,8 @@ export class CompatModelClient implements ModelClient {
           try {
             payload = JSON.parse(dataLines)
           } catch {
-            continue
+            yield { kind: 'error', message: 'model stream contained invalid SSE JSON', code: 'stream_invalid_frame' }
+            return
           }
           const result = this.consumeStreamPayload(
             payload as Record<string, unknown>,
@@ -1069,6 +1070,14 @@ export class CompatModelClient implements ModelClient {
     }
     if (signal.aborted) {
       yield { kind: 'error', message: 'request was aborted' }
+      return
+    }
+    if (!sawDone && !finishReason) {
+      yield {
+        kind: 'error',
+        message: 'model stream ended before a terminal frame',
+        code: 'stream_truncated'
+      }
       return
     }
     // Safety net: finalize any tool call whose arguments finished streaming but

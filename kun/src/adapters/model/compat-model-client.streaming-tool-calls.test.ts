@@ -116,6 +116,28 @@ function makeClient(fetchImpl: typeof fetch, modelCapabilities?: (model: string)
 }
 
 describe('CompatModelClient streaming tool-call finalization', () => {
+  it('accepts CRLF-delimited SSE frames', async () => {
+    const frames = [
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'hello' }, finish_reason: 'stop' }] })}\r\n\r\n`
+    ]
+    const chunks = await drain(makeClient(streamingFetch(frames)).stream(request()))
+    expect(chunks).toEqual(expect.arrayContaining([{ kind: 'assistant_text_delta', text: 'hello' }]))
+    expect(completed(chunks).stopReason).toBe('stop')
+  })
+
+  it('reports malformed or truncated SSE instead of completing a partial response', async () => {
+    const malformed = await drain(makeClient(streamingFetch(['data: {bad-json}\n\n'])).stream(request()))
+    expect(malformed).toEqual([{ kind: 'error', message: 'model stream contained invalid SSE JSON', code: 'stream_invalid_frame' }])
+
+    const truncated = await drain(makeClient(streamingFetch([
+      frame({ choices: [{ index: 0, delta: { content: 'partial' } }] })
+    ])).stream(request()))
+    expect(truncated).toEqual([
+      { kind: 'assistant_text_delta', text: 'partial' },
+      { kind: 'error', message: 'model stream ended before a terminal frame', code: 'stream_truncated' }
+    ])
+  })
+
   it('emits a tool call when chat_completions ends with finish_reason "tool_calls" (no double emit)', async () => {
     const frames = [...chatToolCallDeltas(), chatFinish('tool_calls'), 'data: [DONE]\n\n']
     const chunks = await drain(makeClient(streamingFetch(frames)).stream(request()))
