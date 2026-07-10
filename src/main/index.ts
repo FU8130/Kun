@@ -119,6 +119,7 @@ import {
   classifyManagedRuntimeHotApplyResponse
 } from './runtime/kun-runtime-config-service'
 import { ManagedRuntimeOperationCoordinator } from './runtime/managed-runtime-operation-coordinator'
+import { ManagedRuntimeShutdownCoordinator } from './runtime/managed-runtime-shutdown-coordinator'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // 品牌升级为 Kun 后仍保留旧 AppUserModelId:它必须和 electron-builder
@@ -231,14 +232,10 @@ let clawRuntime: ClawRuntime | null = null
 let scheduleRuntime: ScheduleRuntime | null = null
 let telegramRuntime: TelegramRuntime | null = null
 let workflowRuntime: WorkflowRuntime | null = null
-let managedRuntimesStoppedForQuit = false
-let managedRuntimesStopPromise: Promise<void> | null = null
 let appBehavior: AppBehaviorConfigV1 = normalizeAppBehaviorSettings()
 let tray: Tray | null = null
 let trayMenu: Menu | null = null
 let trayMenuOpenPromise: Promise<void> | null = null
-let isQuitting = false
-let isUpdateInstallQuitting = false
 let closeWindowPromptOpen = false
 let checkpointCleanupTimer: ReturnType<typeof setInterval> | null = null
 
@@ -260,11 +257,11 @@ function stopCheckpointCleanupTimer(): void {
 }
 
 function isAppQuitInProgress(): boolean {
-  return isQuitting || isUpdateInstallQuitting
+  return runtimeShutdown.isQuitInProgress
 }
 
 function setUpdateInstallQuitting(active: boolean): void {
-  isUpdateInstallQuitting = active
+  runtimeShutdown.setUpdateInstallQuit(active)
 }
 
 async function runCheckpointCleanupIfDue(settings: AppSettingsV1): Promise<void> {
@@ -311,26 +308,21 @@ function syncCheckpointCleanupTimer(settings: AppSettingsV1): void {
   checkpointCleanupTimer.unref?.()
 }
 
-async function stopManagedRuntimesForQuit(): Promise<void> {
-  if (managedRuntimesStoppedForQuit) return
-  await stopManagedRuntimes()
-  managedRuntimesStoppedForQuit = true
+const runtimeShutdown = new ManagedRuntimeShutdownCoordinator(async () => {
+  scheduleRuntime?.stop()
+  workflowRuntime?.stop()
+  clawRuntime?.stop()
+  telegramRuntime?.stop()
+  stopWeixinBridgeRuntime()
+  await kunRuntimeAdapter.stopAndWait()
+})
+
+function stopManagedRuntimesForQuit(): Promise<void> {
+  return runtimeShutdown.stopForQuit()
 }
 
-async function stopManagedRuntimes(): Promise<void> {
-  if (!managedRuntimesStopPromise) {
-    managedRuntimesStopPromise = (async () => {
-      scheduleRuntime?.stop()
-      workflowRuntime?.stop()
-      clawRuntime?.stop()
-      telegramRuntime?.stop()
-      stopWeixinBridgeRuntime()
-      await kunRuntimeAdapter.stopAndWait()
-    })().finally(() => {
-      managedRuntimesStopPromise = null
-    })
-  }
-  return managedRuntimesStopPromise
+function stopManagedRuntimes(): Promise<void> {
+  return runtimeShutdown.stop()
 }
 
 async function loadGuiUpdaterModule(): Promise<GuiUpdaterModule> {
@@ -503,7 +495,7 @@ function showRendererContextMenu(window: BrowserWindow, params: ContextMenuParam
 }
 
 function quitFromTray(): void {
-  isQuitting = true
+  runtimeShutdown.requestQuit()
   app.quit()
 }
 
@@ -610,7 +602,7 @@ async function promptWindowCloseAction(window: BrowserWindow): Promise<void> {
       if (result.checkboxChecked) {
         await saveWindowCloseActionPreference('quit')
       }
-      isQuitting = true
+      runtimeShutdown.requestQuit()
       app.quit()
     }
   } catch (error) {
@@ -625,8 +617,8 @@ async function promptWindowCloseAction(window: BrowserWindow): Promise<void> {
 function handleMainWindowClose(window: BrowserWindow, event: Electron.Event): void {
   const decision = resolveMainWindowCloseDecision({
     closeAction: appBehavior.closeAction,
-    isQuitting,
-    isUpdateInstallQuitting
+    isQuitting: runtimeShutdown.isQuitRequested,
+    isUpdateInstallQuitting: runtimeShutdown.isUpdateInstallQuit
   })
   if (decision === 'allow') return
 
@@ -812,7 +804,7 @@ const runtimeSupervisor = new KunRuntimeSupervisor<AppSettingsV1>({
     checkHealth: (settings, timeoutMs) => waitForKunHealth(settings, timeoutMs),
     isChildRunning: () => kunRuntimeAdapter.isChildRunning(),
     isOperationPending: () => runtimeOperations.hasPendingOperation(),
-    isStopped: () => managedRuntimesStoppedForQuit || isAppQuitInProgress(),
+    isStopped: () => runtimeShutdown.isStoppedForQuit || isAppQuitInProgress(),
     publish: (full) => {
       logWarn('runtime-status', `${full.state} (${full.source})${full.message ? `: ${full.message}` : ''}`)
       for (const win of BrowserWindow.getAllWindows()) {
@@ -1730,15 +1722,14 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', (event) => {
-  isQuitting = true
+  runtimeShutdown.requestQuit()
   stopRuntimeWatchdog()
   stopCheckpointCleanupTimer()
-  if (managedRuntimesStoppedForQuit) return
+  if (runtimeShutdown.isStoppedForQuit) return
   event.preventDefault()
   void stopManagedRuntimesForQuit()
     .catch((error) => {
       console.warn('[kun-gui] failed to stop Kun runtime:', error)
-      managedRuntimesStoppedForQuit = true
     })
     .finally(() => {
       app.quit()

@@ -17,7 +17,7 @@
   runtime configuration service.
 - [x] 2.4 Introduce a main-process runtime supervisor for ensure, restart, watchdog,
   and settings-apply serialization.
-- [ ] 2.5 Extract application shutdown coordination and prove no runtime can restart
+- [x] 2.5 Extract application shutdown coordination and prove no runtime can restart
   after quit begins.
 - [ ] 2.6 Reduce `main/index.ts` and `kun-process.ts` to bootstrap/facade composition
   and remove duplicated lifecycle state.
