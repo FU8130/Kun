@@ -31,10 +31,15 @@ export async function startNodeHttpServer(input: {
     server,
     host: input.host,
     port,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
+    close: async () => {
+      const closed = new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()))
       })
+      // SSE connections are intentionally long lived. Force-close active
+      // sockets during shutdown so they cannot hold the HTTP server open.
+      server.closeAllConnections?.()
+      await closed
+    }
   }
 }
 
@@ -44,9 +49,13 @@ async function handleNodeRequest(
   outgoing: ServerResponse
 ): Promise<void> {
   try {
-    const request = toFetchRequest(incoming)
-    const response = await dispatchRequest(router, request)
-    await writeFetchResponse(outgoing, response)
+    const adapted = toFetchRequest(incoming, outgoing)
+    try {
+      const response = await dispatchRequest(router, adapted.request)
+      await writeFetchResponse(outgoing, response)
+    } finally {
+      adapted.dispose()
+    }
   } catch {
     const body = JSON.stringify({
       code: 'internal_error',
@@ -57,7 +66,10 @@ async function handleNodeRequest(
   }
 }
 
-function toFetchRequest(incoming: IncomingMessage): Request {
+function toFetchRequest(incoming: IncomingMessage, outgoing: ServerResponse): {
+  request: Request
+  dispose(): void
+} {
   const method = incoming.method ?? 'GET'
   const host = incoming.headers.host ?? '127.0.0.1'
   const url = `http://${host}${incoming.url ?? '/'}`
@@ -71,15 +83,30 @@ function toFetchRequest(incoming: IncomingMessage): Request {
     }
   }
   const hasBody = method !== 'GET' && method !== 'HEAD'
+  const abort = new AbortController()
+  const abortRequest = () => abort.abort()
+  incoming.once('aborted', abortRequest)
+  incoming.once('error', abortRequest)
+  outgoing.once('close', abortRequest)
+  outgoing.once('error', abortRequest)
   const init: RequestInit & { duplex?: 'half' } = {
     method,
-    headers
+    headers,
+    signal: abort.signal
   }
   if (hasBody) {
     init.body = Readable.toWeb(incoming) as ReadableStream<Uint8Array>
     init.duplex = 'half'
   }
-  return new Request(url, init)
+  return {
+    request: new Request(url, init),
+    dispose: () => {
+      incoming.off('aborted', abortRequest)
+      incoming.off('error', abortRequest)
+      outgoing.off('close', abortRequest)
+      outgoing.off('error', abortRequest)
+    }
+  }
 }
 
 async function writeFetchResponse(outgoing: ServerResponse, response: Response): Promise<void> {
@@ -96,10 +123,38 @@ async function writeFetchResponse(outgoing: ServerResponse, response: Response):
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      if (value) outgoing.write(Buffer.from(value))
+      if (value && !outgoing.write(Buffer.from(value))) {
+        await waitForDrain(outgoing)
+      }
     }
   } finally {
-    outgoing.end()
+    await reader.cancel().catch(() => undefined)
+    if (!outgoing.writableEnded && !outgoing.destroyed) outgoing.end()
     reader.releaseLock()
   }
+}
+
+function waitForDrain(outgoing: ServerResponse): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      outgoing.off('drain', onDrain)
+      outgoing.off('close', onClose)
+      outgoing.off('error', onError)
+    }
+    const onDrain = () => {
+      cleanup()
+      resolve()
+    }
+    const onClose = () => {
+      cleanup()
+      reject(new Error('client connection closed before response drain'))
+    }
+    const onError = (error: Error) => {
+      cleanup()
+      reject(error)
+    }
+    outgoing.once('drain', onDrain)
+    outgoing.once('close', onClose)
+    outgoing.once('error', onError)
+  })
 }

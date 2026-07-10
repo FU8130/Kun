@@ -8,9 +8,10 @@ const HEARTBEAT_INTERVAL_MS = 15_000
 /**
  * Build an SSE response for `GET /v1/threads/{id}/events`.
  *
- * The handler first replays persisted events with `seq` greater than
- * `since_seq`, then subscribes to the event bus to deliver live
- * updates. The stream closes when the request's `AbortSignal`
+ * The handler subscribes before it replays persisted events, buffering live
+ * updates until replay is complete. That closes the otherwise permanent gap
+ * between a store snapshot and EventBus subscription. The stream closes when
+ * the request's `AbortSignal`
  * fires (the client disconnects) or the server stops publishing.
  *
  * Delivery is deduplicated per connection: an event whose seq is at or
@@ -54,6 +55,10 @@ export function buildEventStreamResponse(input: {
         }
       }
       input.request.signal.addEventListener('abort', close)
+      if (input.request.signal.aborted) {
+        close()
+        return
+      }
       try {
         let lastDeliveredSeq = sinceSeq
         const deliver = (event: RuntimeEvent): void => {
@@ -63,21 +68,29 @@ export function buildEventStreamResponse(input: {
           }
           controller.enqueue(encoder.encode(encodeSseEvent(event)))
         }
-        const highestSeq = await input.sessionStore.highestSeq(input.threadId).catch(() => 0)
-        const backlog = sinceSeq >= highestSeq
-          ? []
-          : await input.sessionStore.loadEventsSince(input.threadId, sinceSeq)
-        for (const event of backlog) {
-          deliver(event)
-        }
+        const liveDuringReplay: RuntimeEvent[] = []
+        let replaying = true
         unsubscribe = input.eventBus.subscribe(input.threadId, (event: RuntimeEvent) => {
           if (closed) return
+          if (replaying) {
+            liveDuringReplay.push(event)
+            return
+          }
           try {
             deliver(event)
           } catch {
             close()
           }
         })
+        const highestSeq = await input.sessionStore.highestSeq(input.threadId).catch(() => 0)
+        const backlog = sinceSeq >= highestSeq
+          ? []
+          : await input.sessionStore.loadEventsSince(input.threadId, sinceSeq)
+        for (const event of backlog) deliver(event)
+        // Publishing is synchronous, so no new event can slip between this
+        // drain and switching the subscriber into direct-delivery mode.
+        for (const event of liveDuringReplay.sort((a, b) => a.seq - b.seq)) deliver(event)
+        replaying = false
         heartbeatTimer = setInterval(() => {
           if (closed) return
           try {

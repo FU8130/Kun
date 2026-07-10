@@ -28,4 +28,49 @@ describe('Node HTTP server', () => {
       await server.close()
     }
   })
+
+  it('aborts the Fetch request when an SSE client disconnects', async () => {
+    const router = new Router()
+    let resolveAbort: (() => void) | undefined
+    const aborted = new Promise<void>((resolve) => {
+      resolveAbort = resolve
+    })
+    router.add('GET', '/events', (request) => {
+      request.signal.addEventListener('abort', () => resolveAbort?.(), { once: true })
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: connected\n\n'))
+        }
+      }), { headers: { 'content-type': 'text/event-stream' } })
+    })
+    const server = await startNodeHttpServer({ router, host: '127.0.0.1', port: 0 })
+    const controller = new AbortController()
+
+    try {
+      const response = await fetch(`http://${server.host}:${server.port}/events`, { signal: controller.signal })
+      await response.body!.getReader().read()
+      controller.abort()
+      await aborted
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('force-closes a live SSE connection during shutdown', async () => {
+    const router = new Router()
+    router.add('GET', '/events', () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: connected\n\n'))
+      }
+    }), { headers: { 'content-type': 'text/event-stream' } }))
+    const server = await startNodeHttpServer({ router, host: '127.0.0.1', port: 0 })
+
+    const response = await fetch(`http://${server.host}:${server.port}/events`)
+    await response.body!.getReader().read()
+
+    await expect(Promise.race([
+      server.close(),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error('server close timed out')), 1_000))
+    ])).resolves.toBeUndefined()
+  })
 })

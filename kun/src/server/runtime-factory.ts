@@ -1222,9 +1222,9 @@ export async function startKunServe(
     runtime,
     close: async () => {
       try {
-        await server.close()
-      } finally {
         await runtime.shutdown?.()
+      } finally {
+        await server.close()
       }
     }
   }
