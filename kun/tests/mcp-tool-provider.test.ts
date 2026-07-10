@@ -585,7 +585,86 @@ describe('MCP tool provider', () => {
     expect(callOptions[0]?.signal).toBe(controller.signal)
   })
 
-  it('reconnects and retries once when an MCP tool call fails', async () => {
+  it('treats server-provided read-only hints as neither approval nor sandbox authority', async () => {
+    let calls = 0
+    const config = KunCapabilitiesConfig.parse({
+      mcp: {
+        enabled: true,
+        servers: {
+          github: { transport: 'stdio', command: 'node', trustScope: 'user' }
+        }
+      }
+    })
+    const client: McpClientLike = {
+      async listTools() {
+        return {
+          tools: [{ name: 'mutate', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } }]
+        }
+      },
+      async callTool() {
+        calls += 1
+        return { ok: true }
+      },
+      async close() {}
+    }
+    const built = await buildMcpToolProviders(config.mcp, { clientFactory: async () => client })
+    const direct = built.providers.find((provider) => provider.id === 'mcp:github')
+    const tool = direct?.tools.find((candidate) => candidate.name === 'mcp_github_mutate')
+    expect(tool).toMatchObject({ policy: 'on-request', toolKind: 'command_execution' })
+    const host = new LocalToolHost({ registry: new CapabilityRegistry(built.providers) })
+    const context = { ...buildContext('/tmp/project'), sandboxMode: 'read-only' as const }
+
+    expect((await host.listTools(context)).map((candidate) => candidate.name)).not.toContain('mcp_github_mutate')
+    const result = await host.execute({
+      callId: 'mcp_readonly',
+      toolName: 'mcp_github_mutate',
+      arguments: {}
+    }, context)
+    expect(result.item).toMatchObject({
+      kind: 'tool_result',
+      isError: true,
+      output: { code: 'sandbox_command_blocked' }
+    })
+    expect(calls).toBe(0)
+  })
+
+  it('keeps blocked MCP servers out of the shared resource facade', async () => {
+    let resourceCalls = 0
+    const config = KunCapabilitiesConfig.parse({
+      mcp: {
+        enabled: true,
+        servers: {
+          github: { transport: 'stdio', command: 'node', trustScope: 'user' }
+        }
+      }
+    })
+    const client: McpClientLike = {
+      async listTools() { return { tools: [] } },
+      async callTool() { return { ok: true } },
+      async listResources() {
+        resourceCalls += 1
+        return { resources: [{ uri: 'file:///secret' }] }
+      },
+      async close() {}
+    }
+    const built = await buildMcpToolProviders(config.mcp, { clientFactory: async () => client })
+    const facade = built.providers.find((provider) => provider.id === 'mcp:facade')
+    const tool = facade?.tools.find((candidate) => candidate.name === 'mcp_list_resources')
+    const context = {
+      ...buildContext('/tmp/project'),
+      blockedProviderIds: ['mcp:github']
+    }
+
+    expect(tool).toMatchObject({ toolKind: 'command_execution' })
+    expect(tool?.shouldAdvertise?.(context)).toBe(false)
+    await expect(tool?.execute({}, context)).resolves.toMatchObject({
+      output: { error: expect.stringContaining('No connected MCP server') },
+      isError: true
+    })
+    expect(resourceCalls).toBe(0)
+  })
+
+  it('reconnects without replaying a mid-flight MCP tool call', async () => {
     let factories = 0
     let closes = 0
     const config = KunCapabilitiesConfig.parse({
@@ -637,7 +716,8 @@ describe('MCP tool provider', () => {
     expect(factories).toBe(2)
     expect(closes).toBe(1)
     expect(result.item.kind === 'tool_result' ? result.item.output : {}).toMatchObject({
-      result: { ok: true, instance: 2 }
+      code: 'tool_execution_failed',
+      error: expect.stringContaining('result is unknown')
     })
   })
 

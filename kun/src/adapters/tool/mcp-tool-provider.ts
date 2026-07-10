@@ -617,6 +617,10 @@ function createMcpLocalTool(
     name: normalizeMcpToolName(state.serverId, descriptor.name),
     description: descriptor.description ?? `MCP tool ${descriptor.name} from ${state.serverId}`,
     inputSchema: descriptor.inputSchema ?? { type: 'object' },
+    // An MCP server is a separate executable or remote authority. Its own
+    // annotations are unauthenticated metadata, so it must not bypass the
+    // host command sandbox by masquerading as a harmless tool call.
+    toolKind: 'command_execution',
     policy: policyFromAnnotations(descriptor.annotations),
     shouldAdvertise: (context: ToolHostContext) => canUseMcpServer(state.server, context.workspace),
     execute: async (args, context) => {
@@ -695,12 +699,7 @@ async function callMcpToolWithReconnect(
   input: { name: string; arguments: Record<string, unknown> },
   signal: AbortSignal | undefined,
   timeout = state.server.timeoutMs,
-  /**
-   * Whether this specific tool is safe to REPLAY after a mid-call transport
-   * drop. Only tools explicitly marked read-only or idempotent are safe; a
-   * non-idempotent tool may have already executed on the server before the
-   * transport failed, so replaying it could duplicate its side effects.
-   */
+  /** Whether this call is locally known to be replay-safe after a drop. */
   replaySafe = false
 ): Promise<unknown> {
   // Track whether the request actually reached `callTool`. A failure while
@@ -724,8 +723,8 @@ async function callMcpToolWithReconnect(
     }
     markMcpConnectionError(state, error)
     if (!sentToServer || replaySafe) {
-      // Either the request never left (safe) or the tool is read-only/idempotent
-      // (safe to repeat) — replay it on the reconnected client.
+      // Either the request never left (safe) or a locally trusted allow-list
+      // marked it replay-safe — replay it on the reconnected client.
       const client = await reconnectMcpConnection(state, signal)
       return client.callTool(input, { signal, timeout })
     }
@@ -739,16 +738,12 @@ async function callMcpToolWithReconnect(
 }
 
 /**
- * MCP annotations that make a tool safe to replay after a mid-call transport
- * drop. Per the MCP spec the hints default to the UNSAFE side (readOnlyHint
- * false, idempotentHint false, destructiveHint effectively true), so we only
- * treat a tool as replay-safe when it is EXPLICITLY read-only or idempotent.
- * Absent annotations → not safe → no auto-replay.
+ * Server-provided annotations are useful display hints, but an untrusted
+ * remote server must not authorize a retry of a side-effecting operation by
+ * declaring itself read-only or idempotent. There is currently no local
+ * replay allow-list, so mid-flight calls are always treated as unknown.
  */
-function isMcpReplaySafe(annotations: McpToolDescriptor['annotations']): boolean {
-  if (!annotations) return false
-  if (annotations.readOnlyHint === true && annotations.destructiveHint !== true) return true
-  if (annotations.idempotentHint === true && annotations.destructiveHint !== true) return true
+function isMcpReplaySafe(_annotations: McpToolDescriptor['annotations']): boolean {
   return false
 }
 
@@ -765,7 +760,7 @@ export class McpToolStatusUnknownError extends Error {
   ) {
     super(
       `MCP tool "${toolName}" on server "${serverId}" lost its connection mid-call; ` +
-        'its result is unknown and it was not retried automatically because it is not marked read-only or idempotent. ' +
+        'its result is unknown and it was not retried automatically because no local replay policy approved it. ' +
         'Verify whether it took effect before re-running it.'
     )
     this.name = 'McpToolStatusUnknownError'
@@ -928,9 +923,9 @@ function shouldUseMcpSearch(config: NonNullable<McpCapabilityConfig['search']>, 
 }
 
 function policyFromAnnotations(annotation: McpToolDescriptor['annotations']): LocalTool['policy'] {
-  if (annotation?.readOnlyHint && !annotation.openWorldHint && !annotation.destructiveHint) return 'auto'
-  if (annotation?.destructiveHint) return 'on-request'
-  if (annotation?.openWorldHint) return 'untrusted'
+  // MCP annotations come from the remote server and are not an authorization
+  // signal. Keep a uniform confirmation boundary regardless of what it says.
+  void annotation
   return 'on-request'
 }
 

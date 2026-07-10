@@ -77,7 +77,7 @@ const descriptor: McpToolDescriptor = {
 }
 
 describe('mcp tool provider reliability', () => {
-  it('shares one reconnect across concurrent tool calls after a transport failure', async () => {
+  it('does not replay concurrent MCP calls based on server read-only annotations', async () => {
     const first = new MockMcpClient([descriptor], vi.fn(async () => {
       throw new Error('socket connection reset')
     }))
@@ -93,21 +93,25 @@ describe('mcp tool provider reliability', () => {
     const tool = built.providers[0]?.tools.find((item) => item.name === 'mcp_call')
     expect(tool).toBeTruthy()
 
-    const [one, two] = await Promise.all([
+    const settled = await Promise.allSettled([
       tool!.execute({ toolId: 'mcp_docs_lookup', arguments: {} }, context),
       tool!.execute({ toolId: 'mcp_docs_lookup', arguments: {} }, context)
     ])
 
     expect(clientFactory).toHaveBeenCalledTimes(2)
     expect(first.close).toHaveBeenCalledTimes(1)
-    expect(second.callTool).toHaveBeenCalledTimes(2)
-    expect(one).toMatchObject({ output: { result: { ok: true } } })
-    expect(two).toMatchObject({ output: { result: { ok: true } } })
-    expect(built.diagnostics[0]).toMatchObject({
-      id: 'docs',
-      status: 'connected',
-      available: true,
-      reconnectAttempts: 1
+    expect(second.callTool).not.toHaveBeenCalled()
+    expect(settled.every((result) => result.status === 'rejected')).toBe(true)
+    expect(settled.find((result) => result.status === 'rejected')).toMatchObject({
+      reason: expect.objectContaining({ statusUnknown: true })
+    })
+    await vi.waitFor(() => {
+      expect(built.diagnostics[0]).toMatchObject({
+        id: 'docs',
+        status: 'connected',
+        available: true,
+        reconnectAttempts: 1
+      })
     })
   })
 

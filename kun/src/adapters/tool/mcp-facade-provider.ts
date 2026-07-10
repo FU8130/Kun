@@ -46,6 +46,7 @@ function createListResourcesTool(connected: McpFacadeConnectionState[]): LocalTo
     name: 'mcp_list_resources',
     description: 'List MCP resources exposed by currently connected MCP servers.',
     policy: 'auto',
+    toolKind: 'command_execution',
     inputSchema: {
       type: 'object',
       properties: {
@@ -71,6 +72,7 @@ function createReadResourceTool(connected: McpFacadeConnectionState[]): LocalToo
     name: 'mcp_read_resource',
     description: 'Read one MCP resource from a connected MCP server.',
     policy: 'auto',
+    toolKind: 'command_execution',
     inputSchema: {
       type: 'object',
       properties: {
@@ -96,6 +98,7 @@ function createListResourceTemplatesTool(connected: McpFacadeConnectionState[]):
     name: 'mcp_list_resource_templates',
     description: 'List MCP resource templates exposed by currently connected MCP servers.',
     policy: 'auto',
+    toolKind: 'command_execution',
     inputSchema: {
       type: 'object',
       properties: {
@@ -121,6 +124,7 @@ function createListPromptsTool(connected: McpFacadeConnectionState[]): LocalTool
     name: 'mcp_list_prompts',
     description: 'List MCP prompts exposed by currently connected MCP servers.',
     policy: 'auto',
+    toolKind: 'command_execution',
     inputSchema: {
       type: 'object',
       properties: {
@@ -146,6 +150,7 @@ function createGetPromptTool(connected: McpFacadeConnectionState[]): LocalTool {
     name: 'mcp_get_prompt',
     description: 'Get one MCP prompt from a connected MCP server.',
     policy: 'auto',
+    toolKind: 'command_execution',
     inputSchema: {
       type: 'object',
       properties: {
@@ -207,6 +212,7 @@ function isUsableServer(
 ): boolean {
   return state.status === 'connected' &&
     typeof state.client[capability] === 'function' &&
+    !context.blockedProviderIds?.includes(`mcp:${state.serverId}`) &&
     canUseMcpServer(state.server, context.workspace) &&
     isMcpServerVisible(state.server, context.workspace) &&
     isMcpServerTrusted(state.server, context.workspace)

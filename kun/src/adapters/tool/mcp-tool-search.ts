@@ -296,6 +296,7 @@ function createMcpSearchTools(
         required: ['toolId', 'arguments']
       },
       policy: 'on-request',
+      toolKind: 'command_execution',
       execute: async (args, context) => {
         const toolId = stringArg(args.toolId)
         const record = resolveAvailableRecord(options, catalog, context, toolId)
