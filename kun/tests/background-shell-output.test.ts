@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -52,6 +52,8 @@ describe('background-shell-output', () => {
     await writer.close()
     const persisted = await readFile(live.output_file, 'utf-8')
     expect(persisted.startsWith('hello\n')).toBe(true)
+    expect((await stat(writer.paths.outputDir)).mode & 0o777).toBe(0o700)
+    expect((await stat(live.output_file)).mode & 0o777).toBe(0o600)
     const summary = await readBackgroundShellOutputSummary(live.output_file)
     expect(summary.truncated).toBe(true)
   })

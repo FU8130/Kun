@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -655,6 +655,8 @@ describe('DelegationRuntime', () => {
     await store.upsert(ChildRunRecord.parse({ ...base, id: 'child_run', status: 'running' }))
     await store.upsert(ChildRunRecord.parse({ ...base, id: 'child_queued', status: 'queued' }))
     await store.upsert(ChildRunRecord.parse({ ...base, id: 'child_done', status: 'completed' }))
+    expect((await stat(join(dir, 'children'))).mode & 0o777).toBe(0o700)
+    expect((await stat(join(dir, 'children', 'child_run.json'))).mode & 0o777).toBe(0o600)
 
     const runtime = createRuntime({})
     const reconciled = await runtime.reconcileOrphanedChildRuns()

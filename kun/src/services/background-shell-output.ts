@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createWriteStream, type WriteStream } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
@@ -95,9 +95,10 @@ export class BackgroundShellOutputWriter {
   }
 
   async open(): Promise<void> {
-    await mkdir(this.paths.outputDir, { recursive: true })
-    await writeFile(this.paths.outputFilePath, '', 'utf-8')
-    this.stream = createWriteStream(this.paths.outputFilePath, { flags: 'a' })
+    await this.ensureOutputDir()
+    await writeFile(this.paths.outputFilePath, '', { encoding: 'utf-8', mode: 0o600 })
+    await chmod(this.paths.outputFilePath, 0o600)
+    this.stream = createWriteStream(this.paths.outputFilePath, { flags: 'a', mode: 0o600 })
   }
 
   append(chunk: Buffer | string): void {
@@ -112,8 +113,9 @@ export class BackgroundShellOutputWriter {
     if (this.closed) return
     this.closed = true
     if (!this.stream) {
-      await mkdir(this.paths.outputDir, { recursive: true })
-      await writeFile(this.paths.outputFilePath, '', 'utf-8')
+      await this.ensureOutputDir()
+      await writeFile(this.paths.outputFilePath, '', { encoding: 'utf-8', mode: 0o600 })
+      await chmod(this.paths.outputFilePath, 0o600)
       return
     }
     const stream = this.stream
@@ -142,5 +144,10 @@ export class BackgroundShellOutputWriter {
       ...summary,
       output_file: this.paths.outputFilePath
     }
+  }
+
+  private async ensureOutputDir(): Promise<void> {
+    await mkdir(this.paths.outputDir, { recursive: true, mode: 0o700 })
+    await chmod(this.paths.outputDir, 0o700)
   }
 }

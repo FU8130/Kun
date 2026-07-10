@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { MemoryCapabilityConfig } from '../contracts/capabilities.js'
 import { atomicWriteFile } from '../adapters/file/atomic-write.js'
@@ -39,7 +39,7 @@ export class FileMemoryStore implements MemoryStore {
   ) {}
 
   async create(input: MemoryCreateRequest): Promise<MemoryRecord> {
-    await mkdir(this.options.rootDir, { recursive: true })
+    await this.ensureRoot()
     const now = this.now()
     const scope = input.scope ?? 'workspace'
     const workspace = normalizeScopePath(input.workspace)
@@ -181,7 +181,7 @@ export class FileMemoryStore implements MemoryStore {
   }
 
   private async readAll(): Promise<MemoryRecord[]> {
-    await mkdir(this.options.rootDir, { recursive: true })
+    await this.ensureRoot()
     const entries = await readdir(this.options.rootDir).catch(() => [])
     const records = await Promise.all(entries
       .filter((entry) => entry.endsWith('.json'))
@@ -196,6 +196,11 @@ export class FileMemoryStore implements MemoryStore {
       join(this.options.rootDir, `${record.id}.json`),
       JSON.stringify(record, null, 2)
     )
+  }
+
+  private async ensureRoot(): Promise<void> {
+    await mkdir(this.options.rootDir, { recursive: true, mode: 0o700 })
+    await chmod(this.options.rootDir, 0o700)
   }
 
   private now(): string {

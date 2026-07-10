@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -50,6 +50,15 @@ describe('Memory store and recall', () => {
     await store.delete(memory.id)
     expect(await store.retrieve({ query: 'pnpm', workspace: '/tmp/ws', limit: 3 })).toEqual([])
     expect((await store.list({ workspace: '/tmp/ws', includeDeleted: true })).find((item) => item.id === memory.id)?.deletedAt).toBeTruthy()
+  })
+
+  it('stores memory records in a private directory', async () => {
+    const store = createStore()
+    const memory = await store.create({ content: 'private preference', scope: 'user' })
+    const root = join(dir, 'memory')
+
+    expect((await stat(root)).mode & 0o777).toBe(0o700)
+    expect((await stat(join(root, `${memory.id}.json`))).mode & 0o777).toBe(0o600)
   })
 
   it('tracks provenance, expiry, confidence decay, and legacy records', async () => {

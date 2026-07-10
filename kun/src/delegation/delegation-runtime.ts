@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { SubagentToolPolicy, type SubagentMode, type SubagentProfileConfig, type SubagentsCapabilityConfig } from '../contracts/capabilities.js'
@@ -133,12 +133,12 @@ export class FileDelegationStore {
   constructor(private readonly rootDir: string) {}
 
   async upsert(record: ChildRunRecord): Promise<void> {
-    await mkdir(this.rootDir, { recursive: true })
-    await writeFile(join(this.rootDir, `${record.id}.json`), JSON.stringify(record, null, 2), 'utf8')
+    await this.ensureRoot()
+    await writeFile(join(this.rootDir, `${record.id}.json`), JSON.stringify(record, null, 2), { encoding: 'utf8', mode: 0o600 })
   }
 
   async list(parentThreadId?: string): Promise<ChildRunRecord[]> {
-    await mkdir(this.rootDir, { recursive: true })
+    await this.ensureRoot()
     const entries = await readdir(this.rootDir).catch(() => [])
     const records = await Promise.all(entries
       .filter((entry) => entry.endsWith('.json'))
@@ -149,6 +149,11 @@ export class FileDelegationStore {
       .filter((record): record is ChildRunRecord => Boolean(record))
       .filter((record) => !parentThreadId || record.parentThreadId === parentThreadId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }
+
+  private async ensureRoot(): Promise<void> {
+    await mkdir(this.rootDir, { recursive: true, mode: 0o700 })
+    await chmod(this.rootDir, 0o700)
   }
 }
 
