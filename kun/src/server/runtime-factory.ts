@@ -22,6 +22,7 @@ import { buildGoalLocalTools } from '../adapters/tool/goal-tools.js'
 import { buildTodoLocalTools } from '../adapters/tool/todo-tools.js'
 import { buildDesignCanvasLocalTools } from '../adapters/tool/design-canvas-tool.js'
 import { buildDesignSvgLocalTools } from '../adapters/tool/design-svg-tool.js'
+import { buildPptMasterLocalTools } from '../adapters/tool/ppt-master-tool.js'
 import { LocalToolHost, buildDefaultLocalTools } from '../adapters/tool/local-tool-host.js'
 import { createReadArtifactTool } from '../adapters/tool/artifact-tool.js'
 import { FileArtifactStore } from '../artifacts/artifact-store.js'
@@ -372,6 +373,13 @@ export async function createKunServeRuntime(
     // `context.guiDesignCanvas`, so only design-canvas child turns see it.
     tools: [...buildDesignCanvasLocalTools(), ...buildDesignSvgLocalTools()]
   }
+  const pptMasterProvider = {
+    id: 'ppt-master',
+    kind: 'skill' as const,
+    enabled: true,
+    available: true,
+    tools: buildPptMasterLocalTools()
+  }
 	  const taskGraphTool = createTaskGraphTool({ rootDir: join(activeOptions.dataDir, 'task-graphs') })
 	  let baseToolProviders = [
     {
@@ -399,6 +407,7 @@ export async function createKunServeRuntime(
     ...speechGenProviders.providers,
     ...musicGenProviders.providers,
     ...videoGenProviders.providers,
+    pptMasterProvider,
     designCanvasProvider,
     // NOTE: computer_use is intentionally NOT in baseToolProviders — host
     // control must not be delegable to subagents. It is added to the main
@@ -812,6 +821,13 @@ export async function createKunServeRuntime(
 	    const nextMusicGenProviders = buildMusicGenToolProviders(nextOptions.capabilities?.musicGen, { nowIso })
 	    const nextVideoGenProviders = buildVideoGenToolProviders(nextOptions.capabilities?.videoGen, { nowIso })
 	    const nextComputerUseProviders = await buildComputerUseToolProviders(nextOptions.capabilities?.computerUse)
+	    const nextPptMasterProvider = {
+	      id: 'ppt-master',
+	      kind: 'skill' as const,
+	      enabled: true,
+	      available: true,
+	      tools: buildPptMasterLocalTools()
+	    }
 	    const nextResolvedHooks = [
 	      ...buildBuiltinHooks({ quality: nextOptions.quality ?? DEFAULT_QUALITY_CONFIG }),
 	      ...resolveConfiguredHooks(nextOptions.hooks)
@@ -842,6 +858,7 @@ export async function createKunServeRuntime(
 	      ...nextSpeechGenProviders.providers,
 	      ...nextMusicGenProviders.providers,
 	      ...nextVideoGenProviders.providers,
+	      nextPptMasterProvider,
 	      designCanvasProvider
 	    ]
 	    const nextChildRegistry = new CapabilityRegistry(nextBaseToolProviders)

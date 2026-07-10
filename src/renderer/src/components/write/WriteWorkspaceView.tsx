@@ -58,6 +58,7 @@ import {
   useDebouncedValue,
   type WriteNotice
 } from './write-workspace-view-utils'
+import { buildWritePresentationPrompt, isPresentationMarkdownPath } from '../../write/write-presentation'
 
 type Props = {
   leftSidebarCollapsed: boolean; onToggleLeftSidebar: () => void
@@ -77,6 +78,7 @@ export function WriteWorkspaceView({
   const { t } = useTranslation('common')
   const ensureWriteThreadForWorkspace = useChatStore((s) => s.ensureWriteThreadForWorkspace)
   const runtimeConnection = useChatStore((s) => s.runtimeConnection)
+  const busy = useChatStore((s) => s.busy)
   // Field-level subscription: this view must follow fileContent, but it should
   // not re-render for sidebar-only state such as the directory tree or quoted
   // selections.
@@ -197,11 +199,13 @@ export function WriteWorkspaceView({
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const [exportingFormat, setExportingFormat] = useState<WriteExportFormat | typeof WRITE_RICH_CLIPBOARD_ACTION | null>(null)
   const [exportNotice, setExportNotice] = useState<WriteNotice | null>(null)
+  const [presentationInFlight, setPresentationInFlight] = useState(false)
   const workspaceReady = workspaceRoot.trim().length > 0
   const activeFileIsImage = activeFileKind === 'image'
   const activeFileIsPdf = activeFileKind === 'pdf'
   const activeFileIsText = activeFileKind === 'text'
   const isMarkdown = activeFilePath && activeFileIsText ? isMarkdownFile(activeFilePath) : true
+  const isPresentationSource = activeFileIsText && isPresentationMarkdownPath(activeFilePath)
   const renderSafety = getWriteRenderSafety({
     isMarkdown,
     contentLength: fileContent.length,
@@ -235,6 +239,16 @@ export function WriteWorkspaceView({
   const workspacePathLabel = rootDirectory || workspaceRoot
   const workspaceName = workspacePathLabel ? writeBasenameFromPath(workspacePathLabel) : t('writeWorkspace')
   const exportInFlight = exportingFormat !== null
+  const presentationEnabled = Boolean(
+    workspaceReady &&
+    activeFilePath &&
+    isPresentationSource &&
+    !fileLoading &&
+    !fileTruncated &&
+    !renderSafety.readOnly &&
+    !reviewActive &&
+    !busy
+  )
   const fileGuardMessage = renderSafety.notice === 'truncated'
     ? t('writeLargeFileTruncated')
     : renderSafety.notice === 'large-file'
@@ -269,6 +283,68 @@ export function WriteWorkspaceView({
   const setAssistantPrompt = (prompt: string): void => {
     setAssistantOpen(true)
     setInput(input.trim() ? `${input.trim()}\n\n${prompt}` : prompt)
+  }
+
+  const generatePresentation = async (): Promise<void> => {
+    if (!presentationEnabled || !activeFilePath || presentationInFlight) return
+
+    const sourcePath = activeFilePath
+    const sourceWorkspace = workspaceRoot
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+
+    setPresentationInFlight(true)
+    try {
+      if (!await flushSave(sourceWorkspace)) {
+        showExportNotice({ tone: 'error', message: t('writePptSaveFailed') })
+        return
+      }
+      if (typeof window.kunGui?.ensurePptMaster !== 'function') {
+        showExportNotice({ tone: 'error', message: t('writePptUnavailable') })
+        return
+      }
+
+      const ensured = await window.kunGui.ensurePptMaster()
+      if (!ensured.ok) {
+        showExportNotice({
+          tone: 'error',
+          message: t('writePptInstallFailed', { message: ensured.message })
+        })
+        return
+      }
+
+      // Installing the skill can take long enough for the user to navigate to
+      // another document. Do not silently turn that newly selected file into a
+      // presentation; the button always means the file that was clicked.
+      const latest = useWriteWorkspaceStore.getState()
+      if (latest.workspaceRoot !== sourceWorkspace || latest.activeFilePath !== sourcePath) {
+        showExportNotice({ tone: 'error', message: t('writePptSourceChanged') })
+        return
+      }
+      if (!await flushSave(sourceWorkspace)) {
+        showExportNotice({ tone: 'error', message: t('writePptSaveFailed') })
+        return
+      }
+
+      const prompt = buildWritePresentationPrompt({ workspaceRoot: sourceWorkspace, sourcePath })
+      setAssistantOpen(true)
+      if (onSubmitPrompt) {
+        onSubmitPrompt(prompt)
+      } else {
+        setInput(input.trim() ? `${input.trim()}\n\n${prompt}` : prompt)
+      }
+    } catch (error) {
+      showExportNotice({
+        tone: 'error',
+        message: t('writePptInstallFailed', {
+          message: error instanceof Error ? error.message : String(error)
+        })
+      })
+    } finally {
+      setPresentationInFlight(false)
+    }
   }
 
   const handleInlineAgentFocus = useCallback((): void => {
@@ -987,6 +1063,8 @@ export function WriteWorkspaceView({
         modeMenuOpen={modeMenuOpen}
         modeMenuRef={modeMenuRef}
         previewMode={previewMode}
+        presentationEnabled={presentationEnabled}
+        presentationInFlight={presentationInFlight}
         readOnly={renderSafety.readOnly}
         saveLabel={saveLabel}
         saveStatus={saveStatus}
@@ -997,6 +1075,7 @@ export function WriteWorkspaceView({
         setPreviewMode={setPreviewMode}
         onCopyRichText={() => void copyCurrentFileAsRichText()}
         onExportFile={(format) => void exportCurrentFile(format)}
+        onGeneratePresentation={() => void generatePresentation()}
         onSave={() => {
           if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current)
           void flushSave(workspaceRoot)

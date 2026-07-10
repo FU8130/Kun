@@ -208,8 +208,14 @@ import {
 import { exportMemoryMarkdown } from '../services/memory-export-service'
 import { importGithubSkillsToRoot } from '../services/github-skill-import-service'
 import { readLocalPdfText } from '../services/write-pdf-text-service'
+import { ensurePptMaster } from '../services/ppt-master-service'
 import { saveGuiSkillPackage } from '../services/skill-save-service'
-import { listGuiSkillRoots, listGuiSkills } from '../services/skill-service'
+import {
+  comparableSkillRootPath,
+  listGuiSkillRoots,
+  listGuiSkills,
+  normalizeSkillRootPath
+} from '../services/skill-service'
 
 type GuiUpdaterModule = typeof import('../gui-updater')
 
@@ -931,6 +937,33 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     return importGithubSkillsToRoot(request)
   })
 
+  ipcMain.handle('ppt-master:ensure', async () => {
+    const settings = await store.load()
+    if (isManagedPptMasterSkillRootDisabled(settings)) {
+      return {
+        ok: false as const,
+        message: 'PPT Master uses ~/.kun/skills, which is disabled in Settings → Agents → Skills. Enable that skill directory, then try again.'
+      }
+    }
+    const result = await ensurePptMaster({
+      kunHomeDir: join(homedir(), '.kun'),
+      proxyUrl: resolveModelProviderProxyUrl(settings)
+    })
+    if (!result.ok) return result
+    try {
+      // SkillRuntime discovers both skill entries and local tools only at
+      // construction time. Reload even after a repair-only ensure: a prior
+      // dependency install may have failed after the venv was created.
+      await restartRuntime()
+      return result
+    } catch (error) {
+      return {
+        ok: false as const,
+        message: `PPT Master installed, but Kun could not restart: ${error instanceof Error ? error.message : String(error)}`
+      }
+    }
+  })
+
   ipcMain.handle('skill:list', async (_, payload: unknown) => {
     const request = parseIpcPayload('skill:list', skillListPayloadSchema, payload)
     const settings = await store.load()
@@ -1558,4 +1591,16 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
     if (error) return { ok: false, message: error }
     return { ok: true }
   })
+}
+
+function isManagedPptMasterSkillRootDisabled(settings: AppSettingsV1): boolean {
+  const target = comparableSkillRootPath(join(homedir(), '.kun', 'skills'))
+  const disabledDirectories = [
+    ...settings.claw.skills.disabledDirs,
+    ...settings.schedule.skills.disabledDirs
+  ]
+  return disabledDirectories.some((entry) =>
+    entry.trim().toLowerCase() === 'global-deepseek' ||
+    comparableSkillRootPath(normalizeSkillRootPath(entry)) === target
+  )
 }

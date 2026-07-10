@@ -103,6 +103,7 @@ import type {
   WriteRichClipboardPayload,
   WriteRichClipboardResult
 } from './write-export'
+import type { PptMasterEnsureResult } from './ppt-master'
 import type { DesignExportPayload, DesignExportResult } from './design-export'
 import type {
   MemoryMarkdownExportSavePayload,
@@ -181,6 +182,7 @@ export type SkillRootListItem = {
 export type SkillRootListResult =
   | { ok: true; roots: SkillRootListItem[] }
   | { ok: false; message: string }
+export type { PptMasterEnsureResult } from './ppt-master'
 export type UiPluginListIpcResult = { plugins: UiPluginListItem[] }
 export type UiPluginInstallIpcResult =
   | { canceled: true }
@@ -408,6 +410,8 @@ export type KunGuiApi = {
     manifestContent?: string
   ) => Promise<SkillSaveResult>
   importSkillsFromGitHub: (rootPath: string, url: string) => Promise<SkillGithubImportResult>
+  /** Install/repair the managed PPT Master skill and its isolated Python environment. */
+  ensurePptMaster: () => Promise<PptMasterEnsureResult>
   openSkillRoot: (rootPath: string) => Promise<PathOpenResult>
   listUiPlugins: () => Promise<UiPluginListIpcResult>
   installUiPlugin: () => Promise<UiPluginInstallIpcResult>
