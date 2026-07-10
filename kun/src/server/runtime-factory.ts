@@ -613,11 +613,27 @@ export async function createKunServeRuntime(
 	    }
 	  }
 	  const loop = new AgentLoop(loopOptions)
+	  const activeAgentRuns = new Set<Promise<'completed' | 'failed' | 'aborted'>>()
+	  let shuttingDown = false
+	  const runAgentTurn = (threadId: string, turnId: string): Promise<'completed' | 'failed' | 'aborted'> => {
+	    if (shuttingDown) {
+	      return turnService.interruptTurn({ threadId, turnId })
+	        .then(() => 'aborted' as const)
+	        .catch(() => 'aborted' as const)
+	    }
+	    const run = loop.runTurn(threadId, turnId)
+	    activeAgentRuns.add(run)
+	    void run.then(
+	      () => activeAgentRuns.delete(run),
+	      () => activeAgentRuns.delete(run)
+	    )
+	    return run
+	  }
 	  backgroundShellRuntime.bindAgentLoop({
-	    runTurn: (threadId, turnId) => loop.runTurn(threadId, turnId)
+	    runTurn: runAgentTurn
 	  })
 	  delegationRuntime?.bindAgentLoop({
-	    runTurn: (threadId, turnId) => loop.runTurn(threadId, turnId)
+	    runTurn: runAgentTurn
 	  })
 	  const startedAt = activeOptions.startedAt ?? nowIso()
 	  const rebuildCapabilities = (): typeof capabilities => buildRuntimeCapabilityManifest({
@@ -936,7 +952,7 @@ export async function createKunServeRuntime(
 	    },
 	    immutablePrefix: prefix,
     runTurn(threadId, turnId) {
-      return loop.runTurn(threadId, turnId)
+      return runAgentTurn(threadId, turnId)
     },
     resumeInterruptedGoals(threadIds) {
       return loop.resumeInterruptedGoals(threadIds)
@@ -1000,12 +1016,32 @@ export async function createKunServeRuntime(
     skills: () => skillRuntime.diagnostics(),
     shutdown: async () => {
       try {
+        shuttingDown = true
         loop.shutdownGoalResume()
+        await turnService.interruptActiveTurns()
+        await waitForActiveRuns(activeAgentRuns)
         await mcpProviders.close()
       } finally {
         await stores.shutdown?.()
       }
     }
+  }
+}
+
+async function waitForActiveRuns(
+  runs: ReadonlySet<Promise<unknown>>,
+  timeoutMs = 5_000
+): Promise<void> {
+  const pending = [...runs]
+  if (pending.length === 0) return
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      Promise.allSettled(pending),
+      new Promise<void>((resolve) => { timeout = setTimeout(resolve, timeoutMs) })
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
   }
 }
 
@@ -1237,9 +1273,9 @@ export async function startKunServe(
     runtime,
     close: async () => {
       try {
-        await runtime.shutdown?.()
-      } finally {
         await server.close()
+      } finally {
+        await runtime.shutdown?.()
       }
     }
   }

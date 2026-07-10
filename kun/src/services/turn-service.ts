@@ -242,6 +242,17 @@ export class TurnService {
     return { status: 'aborted' }
   }
 
+  /** Abort every in-process turn before runtime shutdown closes its stores. */
+  async interruptActiveTurns(): Promise<number> {
+    const active = this.deps.inflight.list()
+      .filter((record) => record.kind === 'model' && Boolean(record.turnId))
+      .map((record) => ({ threadId: record.threadId, turnId: record.turnId! }))
+    const settled = await Promise.allSettled(
+      active.map(({ threadId, turnId }) => this.interruptTurn({ threadId, turnId }))
+    )
+    return settled.filter((result) => result.status === 'fulfilled').length
+  }
+
   async compact(input: {
     threadId: string
     turnId?: string

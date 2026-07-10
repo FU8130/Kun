@@ -88,6 +88,8 @@ describe('TurnService startTurn', () => {
     const thread = await threadStore.get(threadId)
     expect(thread?.turns).toHaveLength(1)
     expect(thread?.turns[0]?.status).toBe('running')
+    expect(await service.interruptActiveTurns()).toBe(1)
+    expect((await threadStore.get(threadId))?.turns[0]?.status).toBe('aborted')
   })
 
   it('rejects cross-thread interrupts and ignores a late loop finish after interrupt', async () => {
