@@ -4,6 +4,12 @@ import type { SessionStore } from '../../ports/session-store.js'
 import type { RuntimeEvent } from '../../contracts/events.js'
 
 const HEARTBEAT_INTERVAL_MS = 15_000
+/**
+ * Events published while a slow persisted replay is in flight. If this fills,
+ * closing the stream is safer than retaining an unbounded in-memory backlog:
+ * every event is already durable and the client can reconnect from its cursor.
+ */
+export const MAX_LIVE_EVENTS_DURING_REPLAY = 1_024
 
 /**
  * Build an SSE response for `GET /v1/threads/{id}/events`.
@@ -68,9 +74,14 @@ export function buildEventStreamResponse(input: {
         }
         const liveDuringReplay: RuntimeEvent[] = []
         let replaying = true
+        let replayOverflowed = false
         unsubscribe = input.eventBus.subscribe(input.threadId, (event: RuntimeEvent) => {
           if (closed) return
           if (replaying) {
+            if (liveDuringReplay.length >= MAX_LIVE_EVENTS_DURING_REPLAY) {
+              replayOverflowed = true
+              return
+            }
             liveDuringReplay.push(event)
             return
           }
@@ -85,6 +96,13 @@ export function buildEventStreamResponse(input: {
           ? []
           : await input.sessionStore.loadEventsSince(input.threadId, sinceSeq)
         for (const event of backlog) deliver(event)
+        if (replayOverflowed) {
+          controller.enqueue(encoder.encode(
+            'event: error\ndata: {"message":"SSE replay overflow; reconnect from the last event cursor."}\n\n'
+          ))
+          close()
+          return
+        }
         // Publishing is synchronous, so no new event can slip between this
         // drain and switching the subscriber into direct-delivery mode.
         for (const event of liveDuringReplay.sort((a, b) => a.seq - b.seq)) deliver(event)
