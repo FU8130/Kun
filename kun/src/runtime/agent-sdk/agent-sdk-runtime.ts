@@ -308,6 +308,12 @@ export function decideSdkBuiltinSandbox(
   }
 
   if (SDK_READ_PATH_TOOLS.has(toolName)) {
+    // Glob defaults `path` to the SDK cwd, but its required `pattern` can
+    // itself carry an absolute path or `..` traversal. Treat it as a path
+    // selector before accepting the otherwise cwd-scoped request.
+    if (toolName === 'Glob' && !isWorkspaceGlobPattern(input.pattern)) {
+      return denySandbox(`tool ${toolName} is limited to workspace glob patterns`)
+    }
     const path = sdkInputPath(input)
     if (!path && toolName === 'Read') {
       return denySandbox(`tool ${toolName} is blocked because no workspace path was provided`)
@@ -338,6 +344,18 @@ function sdkInputPath(input: Record<string, unknown>): string {
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
   return ''
+}
+
+function isWorkspaceGlobPattern(value: unknown): boolean {
+  if (typeof value !== 'string' || !value.trim()) return false
+  const pattern = value.trim()
+  // Check both host-native and Windows/UNC absolute forms. A persisted SDK
+  // transcript can be replayed on another platform, so native isAbsolute()
+  // alone is not sufficient for rejecting a dangerous path selector.
+  if (isAbsolute(pattern) || /^(?:[a-z]:[\\/]|[\\/]{2})/i.test(pattern)) return false
+  // Glob supports braces, so reject traversal segments both as path components
+  // and as alternatives such as `{src,..}`. A literal `foo..bar` remains valid.
+  return !/(^|[\\/{,])\.\.(?=$|[\\/},])/.test(pattern)
 }
 
 function isPathInsideWorkspace(inputPath: string, workspace: string): boolean {

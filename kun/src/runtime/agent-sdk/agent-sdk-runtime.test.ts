@@ -129,6 +129,25 @@ describe('AgentSdkRuntime.runTurn', () => {
     })).toBeNull()
   })
 
+  test('rejects SDK Glob patterns that select paths outside the workspace', () => {
+    const context = { workspace: '/ws', sandboxMode: 'read-only' as const }
+    expect(decideSdkBuiltinSandbox('Glob', { pattern: '../.ssh/**' }, context)).toMatchObject({
+      allow: false,
+      message: expect.stringContaining('workspace glob patterns')
+    })
+    expect(decideSdkBuiltinSandbox('Glob', { pattern: '/etc/**' }, context)).toMatchObject({
+      allow: false,
+      message: expect.stringContaining('workspace glob patterns')
+    })
+    expect(decideSdkBuiltinSandbox('Glob', { pattern: 'src/**/*.ts' }, context)).toBeNull()
+    // Grep's pattern is content regex; its optional `path` remains the
+    // filesystem selector and must stay contained.
+    expect(decideSdkBuiltinSandbox('Grep', { pattern: 'secret', path: '../.ssh' }, context)).toMatchObject({
+      allow: false,
+      message: expect.stringContaining('limited to workspace paths')
+    })
+  })
+
   test('denies an SDK file operation that escapes through a workspace symlink', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kun-sdk-sandbox-'))
     cleanup.push(root)
