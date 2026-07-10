@@ -26,7 +26,16 @@ function harness(costUsd: number) {
       items.push(item)
     })
   } as Pick<TurnService, 'applyItem'>
-  const usage = { forThread: () => ({ costUsd }) } as Pick<UsageService, 'forThread'>
+  const usage = {
+    forThread: () => ({
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      cacheHitRate: null,
+      turns: 0,
+      costUsd
+    })
+  } satisfies Pick<UsageService, 'forThread'>
   const gate = new TurnBudgetGate({
     threadStore,
     turns,

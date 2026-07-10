@@ -55,14 +55,14 @@
   outcomes while preserving request/cache-prefix and retry behavior.
 - [x] 5.2 Compare representative legacy and extracted model-round transcripts in
   offline deterministic tests, then remove any temporary internal selector.
-- [ ] 5.3 Reduce AgentLoop to its public facade plus narrow composition wiring and
+- [x] 5.3 Reduce AgentLoop to its public facade plus narrow composition wiring and
   remove obsolete duplicated helpers.
 
 ## 6. Validation and handoff
 
-- [ ] 6.1 Run focused tests and `npm --prefix kun run build` for every completed
+- [x] 6.1 Run focused tests and `npm --prefix kun run build` for every completed
   extraction increment.
-- [ ] 6.2 Run the full Kun suite and root typecheck when concurrent work no longer
+- [x] 6.2 Run the full Kun suite and root typecheck when concurrent work no longer
   blocks the shared worktree, documenting unrelated baseline failures separately.
-- [ ] 6.3 Review public HTTP/SSE, persisted-session, tool-schema, and cache-prefix
+- [x] 6.3 Review public HTTP/SSE, persisted-session, tool-schema, and cache-prefix
   compatibility before declaring the change complete.

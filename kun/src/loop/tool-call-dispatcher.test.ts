@@ -36,7 +36,13 @@ function dispatchInput(calls: ToolCallLike[]): ToolDispatchInput {
     threadId: 'thread_1',
     turnId: 'turn_1',
     workspace: '/workspace',
-    modelCapabilities: { id: 'model_1', inputModalities: [], messageParts: [] },
+    modelCapabilities: {
+      id: 'model_1',
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+      supportsToolCalling: true,
+      messageParts: ['text']
+    },
     activeSkillIds: [],
     toolProviderKinds: new Map([
       ['read', 'built-in'],

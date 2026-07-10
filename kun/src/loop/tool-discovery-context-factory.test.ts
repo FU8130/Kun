@@ -15,7 +15,13 @@ function turnContextInput(signal: AbortSignal): ToolTurnContextInput {
     guiDesignCanvas: true,
     guiDesignMode: true,
     modelProviderId: 'provider_1',
-    modelCapabilities: { id: 'model_1', inputModalities: [], messageParts: [] },
+    modelCapabilities: {
+      id: 'model_1',
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+      supportsToolCalling: true,
+      messageParts: ['text']
+    },
     activeSkillIds: ['skill_1'],
     allowedToolNames: ['read'],
     approvalPolicy: 'always',

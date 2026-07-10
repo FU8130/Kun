@@ -204,7 +204,7 @@ describe('AgentLoop', () => {
   })
 
   it('includes the failure reason on turn_failed events', async () => {
-    const h = makeHarness({
+    const model = {
       provider: 'throwing',
       model: 'throwing',
       config: { baseUrl: 'https://user:secret@example.invalid/v1', model: 'throwing' },
@@ -213,7 +213,10 @@ describe('AgentLoop', () => {
         for (const chunk of chunks) yield chunk
         throw new Error('model stream exploded')
       }
-    })
+    } satisfies import('../src/ports/model-client.js').ModelClient & {
+      config: { baseUrl: string; model: string }
+    }
+    const h = makeHarness(model)
     await bootstrapThread(h)
 
     const status = await h.loop.runTurn(h.threadId, h.turnId)
@@ -332,14 +335,17 @@ describe('AgentLoop', () => {
   })
 
   it('redacts credentials from malformed provider URLs in pipeline diagnostics', async () => {
-    const h = makeHarness({
+    const model = {
       provider: 'compat',
       model: 'test-model',
       config: { baseUrl: 'https://user:secret@%', endpointFormat: 'messages', model: 'test-model' },
       async *stream(): AsyncIterable<ModelStreamChunk> {
         yield { kind: 'completed', stopReason: 'stop' }
       }
-    })
+    } satisfies import('../src/ports/model-client.js').ModelClient & {
+      config: { baseUrl: string; endpointFormat: string; model: string }
+    }
+    const h = makeHarness(model)
     await bootstrapThread(h)
 
     await h.loop.runTurn(h.threadId, h.turnId)

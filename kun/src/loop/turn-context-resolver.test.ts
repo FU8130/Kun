@@ -1,7 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ThreadRecord } from '../contracts/threads.js'
 import type { Turn } from '../contracts/turns.js'
+import type { MemoryRecord } from '../contracts/memory.js'
+import type { ModelCapabilityMetadata } from '../contracts/capabilities.js'
+import type { MemoryStore } from '../memory/memory-store.js'
 import { TurnContextResolver, resolveTurnModeContext } from './turn-context-resolver.js'
+
+function capabilities(inputModalities: ModelCapabilityMetadata['inputModalities']): ModelCapabilityMetadata {
+  return {
+    id: 'model_1',
+    inputModalities,
+    outputModalities: ['text'],
+    supportsToolCalling: true,
+    messageParts: ['text']
+  }
+}
 
 function thread(overrides: Partial<ThreadRecord> = {}): ThreadRecord {
   return {
@@ -32,6 +45,7 @@ function turn(overrides: Partial<Turn> = {}): Turn {
     activeSkillIds: [],
     injectedMemoryIds: [],
     injectedMemorySummaries: [],
+    injectedInstructionSources: [],
     items: [],
     steering: [],
     ...overrides
@@ -47,11 +61,12 @@ describe('TurnContextResolver', () => {
       name: 'create_plan', description: 'Create plan', inputSchema: {}, providerId: 'gui'
       }]
     })
-    const retrieve = vi.fn(async () => {
+    const retrieve = vi.fn(async (): Promise<MemoryRecord[]> => {
       resolutionOrder.push('memories')
       return [{
       id: 'memory_1', content: 'Prefer tests', scope: 'workspace',
-      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', deletedAt: null
+      tags: [], confidence: 1,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z'
       }]
     })
     const setLastInjected = vi.fn()
@@ -101,7 +116,7 @@ describe('TurnContextResolver', () => {
       turn: planTurn,
       history: [],
       model: 'model_1',
-      modelCapabilities: { id: 'model_1', inputModalities: ['image'], messageParts: [] },
+      modelCapabilities: capabilities(['image']),
       signal: new AbortController().signal,
       mode,
       goalNoToolRecoverySteps: 0
@@ -155,10 +170,7 @@ describe('TurnContextResolver', () => {
   })
 
   it('reads the live memory store after runtime replacement', async () => {
-    let currentMemoryStore: {
-      retrieve: ReturnType<typeof vi.fn>
-      setLastInjected: ReturnType<typeof vi.fn>
-    } | undefined
+    let currentMemoryStore: Pick<MemoryStore, 'retrieve' | 'setLastInjected'> | undefined
     const resolver = new TurnContextResolver({
       toolHost: { listTools: async () => [] },
       resolveAttachments: async () => ({
@@ -174,7 +186,7 @@ describe('TurnContextResolver', () => {
       turn: turn({ attachmentIds: [] }),
       history: [],
       model: 'model_1',
-      modelCapabilities: { id: 'model_1', inputModalities: ['text' as const], messageParts: [] },
+      modelCapabilities: capabilities(['text']),
       signal: new AbortController().signal,
       mode: resolveTurnModeContext({ turn: turn(), workspace: '/workspace', threadMode: 'agent' as const }),
       goalNoToolRecoverySteps: 0
@@ -183,13 +195,14 @@ describe('TurnContextResolver', () => {
     await expect(resolver.resolve(input)).resolves.toMatchObject({ memories: [] })
 
     currentMemoryStore = {
-      retrieve: vi.fn(async () => [{
+      retrieve: vi.fn(async (): Promise<MemoryRecord[]> => [{
         id: 'memory_live',
         content: 'live memory',
         scope: 'workspace',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
-        deletedAt: null
+        tags: [],
+        confidence: 1
       }]),
       setLastInjected: vi.fn()
     }

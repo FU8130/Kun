@@ -43,7 +43,7 @@ describe('tool dispatch policy', () => {
 
     expect(classifyToolDispatchLane(call('delegate_task'), delegated)).toBe('delegation')
     expect(isParallelDelegationCall(call('delegate_task'), delegated)).toBe(true)
-    expect(isParallelDelegationCall(call('delegate_task'), policy('auto', { delegate_task: 'builtin' }))).toBe(false)
+    expect(isParallelDelegationCall(call('delegate_task'), policy('auto', { delegate_task: 'built-in' }))).toBe(false)
   })
 
   it.each(['always', 'untrusted', 'never'] as const)(

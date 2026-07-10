@@ -177,10 +177,10 @@ describe('RoundOutcomeCoordinator', () => {
       modelProviderId: 'provider_main',
       toolProviderMetadata: new Map([[
         CREATE_PLAN_TOOL_NAME,
-        { providerId: 'provider_tool', providerKind: 'builtin' }
+        { providerId: 'provider_tool', providerKind: 'built-in' }
       ]]),
       toolKinds: new Map([[CREATE_PLAN_TOOL_NAME, 'file_change']]),
-      toolProviderKinds: new Map([[CREATE_PLAN_TOOL_NAME, 'builtin']])
+      toolProviderKinds: new Map([[CREATE_PLAN_TOOL_NAME, 'built-in']])
     }))
 
     expect(outcome).toBe('continue')

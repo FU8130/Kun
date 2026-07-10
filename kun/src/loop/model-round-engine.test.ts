@@ -92,7 +92,10 @@ function harness(values: readonly ModelStreamChunk[]) {
       }
     },
     events: {
-      record: async (event) => { trace.push(`event:${event.kind}`) }
+      record: async (event) => {
+        trace.push(`event:${event.kind}`)
+        return event as never
+      }
     },
     turns: {
       applyItem: async (_threadId, item) => { trace.push(`item:${item.kind}`) }

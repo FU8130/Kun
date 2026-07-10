@@ -30,7 +30,7 @@ function store(content: AttachmentContent): AttachmentStore {
       textFallbackMaxImageDimension: 1_024,
       textFallbackPreferredMimeType: 'image/jpeg'
     })
-  } as AttachmentStore
+  } as unknown as AttachmentStore
 }
 
 describe('TurnAttachmentService', () => {
@@ -40,7 +40,10 @@ describe('TurnAttachmentService', () => {
       attachmentIds: ['att_0123456789abcdef01234567'],
       threadId: 'thread_1',
       workspace: '/workspace',
-      modelCapabilities: { id: 'vision', inputModalities: ['image'], messageParts: [] }
+      modelCapabilities: {
+        id: 'vision', inputModalities: ['image'], outputModalities: ['text'],
+        supportsToolCalling: true, messageParts: ['image_url']
+      }
     })
 
     expect(resolved).toEqual({
@@ -77,7 +80,10 @@ describe('TurnAttachmentService', () => {
       attachmentIds: [first.id],
       threadId: 'thread_1',
       workspace: '/workspace',
-      modelCapabilities: { id: 'vision', inputModalities: ['image'], messageParts: [] }
+      modelCapabilities: {
+        id: 'vision', inputModalities: ['image'], outputModalities: ['text'],
+        supportsToolCalling: true, messageParts: ['image_url']
+      }
     })).resolves.toMatchObject({
       imageAttachments: [{ dataBase64: first.data.toString('base64') }]
     })
@@ -87,7 +93,10 @@ describe('TurnAttachmentService', () => {
       attachmentIds: [second.id],
       threadId: 'thread_1',
       workspace: '/workspace',
-      modelCapabilities: { id: 'vision', inputModalities: ['image'], messageParts: [] }
+      modelCapabilities: {
+        id: 'vision', inputModalities: ['image'], outputModalities: ['text'],
+        supportsToolCalling: true, messageParts: ['image_url']
+      }
     })).resolves.toMatchObject({
       imageAttachments: [{ dataBase64: second.data.toString('base64') }]
     })

@@ -11,7 +11,13 @@ function dispatchInput(signal: AbortSignal): ToolDispatchInput {
     workspace: '/workspace',
     threadMode: 'agent',
     modelProviderId: 'provider_1',
-    modelCapabilities: { id: 'model_1', inputModalities: [], messageParts: [] },
+    modelCapabilities: {
+      id: 'model_1',
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+      supportsToolCalling: true,
+      messageParts: ['text']
+    },
     activeSkillIds: ['skill_1'],
     allowedToolNames: ['read'],
     toolProviderKinds: new Map(),

@@ -1069,12 +1069,12 @@ describe('Kun built-in tools', () => {
             return [
               {
                 id: 'owner001', threadId: 'thr_1', turnId: 'turn_1', command: 'safe', cwd: workspace,
-                shell: 'bash', status: 'running', startedAt: '2026-01-01T00:00:00.000Z',
+                shell: 'bash', status: 'running' as const, startedAt: '2026-01-01T00:00:00.000Z',
                 exitCode: null, output: 'owner output', detached: true
               },
               {
                 id: 'other001', threadId: 'thr_2', turnId: 'turn_2', command: 'secret', cwd: '/other-workspace',
-                shell: 'bash', status: 'running', startedAt: '2026-01-01T00:00:00.000Z',
+                shell: 'bash', status: 'running' as const, startedAt: '2026-01-01T00:00:00.000Z',
                 exitCode: null, output: 'other output', detached: true
               }
             ].filter((session) => session.threadId === threadId)

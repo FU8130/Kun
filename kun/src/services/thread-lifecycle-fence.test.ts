@@ -261,7 +261,8 @@ describe('ThreadLifecycleFence persistence guard', () => {
     await waitForClosing(runtime.fence, runtime.threadId)
     const recreating = runtime.threads.create({
       workspace: runtime.root,
-      model: 'model'
+      model: 'model',
+      mode: 'agent'
     }, {
       id: runtime.threadId,
       title: 'After deletion'
