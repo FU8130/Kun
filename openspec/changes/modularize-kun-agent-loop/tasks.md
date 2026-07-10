@@ -46,7 +46,7 @@
   workspace, attachment, memory, skill, and tool-schema inputs.
 - [x] 4.2 Extract tool execution service with existing approval, user-input,
   cancellation, sandbox, and tool-result semantics.
-- [ ] 4.3 Extract ordered tool-call dispatch and verify suppression, limits, and
+- [x] 4.3 Extract ordered tool-call dispatch and verify suppression, limits, and
   error behavior against characterization transcripts.
 
 ## 5. Model-round extraction and facade cleanup

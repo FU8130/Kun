@@ -106,10 +106,10 @@ import { ToolStormBreaker, type ToolStormBreakerOptions } from './tool-storm-bre
 import { healLoadedHistoryItems } from './history-healing.js'
 import { ModelStreamCollector } from './model-stream-collector.js'
 import { LoopTelemetry } from './loop-telemetry.js'
-import { collectParallelToolDispatchCandidates } from './tool-dispatch-policy.js'
 import { InteractiveToolBridge } from './interactive-tool-bridge.js'
 import { createToolExecutionContext } from './tool-context-factory.js'
 import { ToolExecutionService } from './tool-execution-service.js'
+import { ToolCallDispatcher } from './tool-call-dispatcher.js'
 import { CREATE_PLAN_TOOL_NAME } from '../adapters/tool/create-plan-tool.js'
 import {
   DESIGN_SVG_ANIMATE_TOOL_NAME,
@@ -452,6 +452,7 @@ export class AgentLoop {
   private readonly telemetry: LoopTelemetry
   private readonly interactiveToolBridge: InteractiveToolBridge
   private readonly toolExecution: ToolExecutionService
+  private readonly toolCallDispatcher: ToolCallDispatcher
   private readonly lastNoToolTextByTurn = new Map<string, string>()
   private readonly goalNoToolRecoveryStepsByTurn = new Map<string, number>()
   private readonly emptyPostToolRecoveryStepsByTurn = new Map<string, number>()
@@ -487,6 +488,7 @@ export class AgentLoop {
       nowIso: opts.nowIso,
       ...(opts.onPlanWritten ? { onPlanWritten: opts.onPlanWritten } : {})
     })
+    this.toolCallDispatcher = new ToolCallDispatcher(this.toolExecution)
     this.goalResume = new GoalResumeCoordinator({
       launch: (threadId) => this.launchGoalResumeTurn(threadId),
       getActiveGoalKey: async (threadId) => {
@@ -2065,104 +2067,16 @@ export class AgentLoop {
       ...(this.opts.artifactStore ? { artifactStore: this.opts.artifactStore } : {}),
       interactiveToolBridge: this.interactiveToolBridge
     })
-    let index = 0
-    let executedAny = false
-    const markProgress = (toolName: string): void => {
-      if (!GOAL_NON_PROGRESS_TOOL_NAMES.has(toolName)) {
-        this.turnMadeProgress.add(input.turnId)
-      }
-    }
-
-    while (index < input.calls.length) {
-      if (input.signal.aborted) return 'aborted'
-
-      const call = input.calls[index]
-      if (!call) break
-
-      const storm = this.toolStormBreakers.get(input.turnId)?.inspect(call)
-      if (storm?.suppress) {
-        await this.toolExecution.persistSuppressed({
-          threadId: input.threadId,
-          turnId: input.turnId,
-          call,
-          reason: storm.reason
-        })
-        index += 1
-        continue
-      }
-
-      const parallelCandidates = collectParallelToolDispatchCandidates({
-        calls: input.calls,
-        startIndex: index,
-        policy: {
-          approvalPolicy: input.approvalPolicy,
-          toolProviderKinds: input.toolProviderKinds
+    return this.toolCallDispatcher.dispatch({
+      dispatch: input,
+      context,
+      stormBreaker: this.toolStormBreakers.get(input.turnId),
+      onToolExecuted: (toolName) => {
+        if (!GOAL_NON_PROGRESS_TOOL_NAMES.has(toolName)) {
+          this.turnMadeProgress.add(input.turnId)
         }
-      })
-      if (!parallelCandidates) {
-        const result = await this.toolExecution.executeSafely({
-          threadId: input.threadId,
-          turnId: input.turnId,
-          call,
-          context
-        })
-        executedAny = true
-        markProgress(call.toolName)
-        await this.toolExecution.persistResult(input.threadId, input.turnId, call, result)
-        index += 1
-        continue
       }
-
-      // Keep batches homogeneous: delegation children fan out together (the
-      // runtime semaphore bounds real concurrency), while built-in read-only
-      // tools stay bounded by the pure dispatch policy.
-      const batch: ToolCallLike[] = [call]
-      index += 1
-      let suppressedAfterBatch: { call: ToolCallLike; reason?: string } | undefined
-
-      for (const next of parallelCandidates.calls.slice(1)) {
-        const nextStorm = this.toolStormBreakers.get(input.turnId)?.inspect(next)
-        if (nextStorm?.suppress) {
-          suppressedAfterBatch = { call: next, reason: nextStorm.reason }
-          index += 1
-          break
-        }
-
-        batch.push(next)
-        index += 1
-      }
-
-      const settled = await Promise.allSettled(
-        batch.map((entry) =>
-          this.toolExecution.executeSafely({
-            threadId: input.threadId,
-            turnId: input.turnId,
-            call: entry,
-            context
-          })
-        )
-      )
-      executedAny = true
-      for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
-        const result = settled[batchIndex]
-        const batchCall = batch[batchIndex]
-        if (!result || !batchCall) continue
-        if (result.status === 'rejected') throw result.reason
-        markProgress(batchCall.toolName)
-        await this.toolExecution.persistResult(input.threadId, input.turnId, batchCall, result.value)
-      }
-
-      if (suppressedAfterBatch) {
-        await this.toolExecution.persistSuppressed({
-          threadId: input.threadId,
-          turnId: input.turnId,
-          call: suppressedAfterBatch.call,
-          reason: suppressedAfterBatch.reason
-        })
-      }
-    }
-
-    return executedAny ? 'continue' : 'all_suppressed'
+    })
   }
 
   private async compactIfNeeded(
