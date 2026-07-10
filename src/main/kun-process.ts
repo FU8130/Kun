@@ -7,13 +7,11 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import {
-  defaultKunTokenEconomySettings,
   isKunRuntimeInsecure,
   getKunRuntimeSettings,
   getModelProviderSettings,
   resolveModelProviderProxyUrl,
   resolveKunRuntimeSettings,
-  type ModelProviderModelProfileV1,
   type ModelProviderProfileV1,
   type KunRuntimeSettingsV1,
   type KunSubagentsSettingsV1,
@@ -76,6 +74,15 @@ import {
 import {
   waitForKunStartup
 } from './runtime/kun-runtime-health-monitor'
+import {
+  contextCompactionConfigForRuntime,
+  modelConfigForRuntime,
+  providersConfigForRuntime,
+  rolesConfigForRuntime,
+  storageConfigForRuntime,
+  tokenEconomyConfigForRuntime,
+  toolOutputLimitsConfigForRuntime
+} from './runtime/kun-runtime-model-config'
 
 export type { KunUnexpectedExitInfo } from './runtime/kun-process-controller'
 export { resolveKunStartupTimeoutMs } from './runtime/kun-runtime-health-monitor'
@@ -97,31 +104,6 @@ const KUN_STOP_FORCE_MS = 1_000
 const STDERR_TAIL_MAX_CHARS = 32_768
 const GUI_SCHEDULE_MCP_TIMEOUT_MS = 5_000
 const MAX_TCP_PORT = 65_535
-const DEFAULT_KUN_MODEL_PROFILES: Record<string, Record<string, unknown>> = {
-  'deepseek-v4-pro': {
-    contextWindowTokens: 1_000_000,
-    contextCompaction: {
-      softThreshold: 980_000,
-      hardThreshold: 990_000
-    },
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsToolCalling: true,
-    messageParts: ['text']
-  },
-  'deepseek-v4-flash': {
-    aliases: ['deepseek-chat', 'deepseek-reasoner'],
-    contextWindowTokens: 1_000_000,
-    contextCompaction: {
-      softThreshold: 980_000,
-      hardThreshold: 990_000
-    },
-    inputModalities: ['text'],
-    outputModalities: ['text'],
-    supportsToolCalling: true,
-    messageParts: ['text']
-  }
-}
 
 type KunLogStream = 'stdout' | 'stderr' | 'lifecycle'
 type KunChildLogCapture = {
@@ -775,217 +757,6 @@ function stringRecordValue(value: unknown): Record<string, string> {
 
 function positiveIntegerValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined
-}
-
-function modelConfigForRuntime(
-  existing: Record<string, unknown>,
-  guiModelProfiles: Record<string, ModelProviderModelProfileV1> = {}
-): Record<string, unknown> {
-  const existingProfiles = objectValue(existing.profiles)
-  const guiProfiles = modelConfigProfilesFromProviderProfiles(guiModelProfiles)
-  const profileDefaults = {
-    ...DEFAULT_KUN_MODEL_PROFILES,
-    ...guiProfiles
-  }
-  const profiles: Record<string, unknown> = {}
-  for (const modelId of new Set([
-    ...Object.keys(profileDefaults),
-    ...Object.keys(existingProfiles)
-  ])) {
-    const defaultProfile = objectValue(profileDefaults[modelId])
-    const existingProfile = objectValue(existingProfiles[modelId])
-    const guiProfile = objectValue(guiProfiles[modelId])
-    const baseProfile = Object.prototype.hasOwnProperty.call(guiProfiles, modelId)
-      ? { ...defaultProfile, ...guiProfile }
-      : { ...defaultProfile, ...existingProfile }
-    profiles[modelId] = {
-      ...baseProfile,
-      contextCompaction: {
-        ...objectValue(defaultProfile.contextCompaction),
-        ...objectValue(existingProfile.contextCompaction),
-        ...objectValue(guiProfile.contextCompaction)
-      }
-    }
-  }
-  return {
-    ...existing,
-    profiles
-  }
-}
-
-function modelConfigProfilesFromProviderProfiles(
-  profiles: Record<string, ModelProviderModelProfileV1>
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const [modelId, profile] of Object.entries(profiles)) {
-    const trimmed = modelId.trim()
-    if (!trimmed) continue
-    out[trimmed] = {
-      ...(profile.aliases?.length ? { aliases: profile.aliases } : {}),
-      ...(profile.contextWindowTokens ? { contextWindowTokens: profile.contextWindowTokens } : {}),
-      ...(profile.maxOutputTokens ? { maxOutputTokens: profile.maxOutputTokens } : {}),
-      inputModalities: profile.inputModalities,
-      outputModalities: profile.outputModalities,
-      supportsToolCalling: profile.supportsToolCalling,
-      messageParts: profile.messageParts,
-      ...(profile.reasoning ? { reasoning: profile.reasoning } : {}),
-      ...(profile.endpointFormat ? { endpointFormat: profile.endpointFormat } : {}),
-      ...(profile.responsesMode ? { responsesMode: profile.responsesMode } : {})
-    }
-  }
-  return out
-}
-
-/**
- * Mirror every configured GUI provider (apiKey + baseUrl + endpointFormat
- * + per-provider proxy) into the kun config's `serve.providers` map so the
- * runtime's MultiProviderModelClient can route a workflow / scheduled-task
- * / IM-bridge turn to a non-runtime provider per request. Skips entries
- * whose baseUrl is empty — those couldn't be reached anyway.
- *
- * The kun runtime's own bound provider is included too; the wrapper's
- * default client handles it identically, so duplicate entries are
- * idempotent.
- */
-function providersConfigForRuntime(settings: AppSettingsV1): Record<string, Record<string, unknown>> {
-  const out: Record<string, Record<string, unknown>> = {}
-  const proxyUrl = resolveModelProviderProxyUrl(settings)
-  for (const provider of getModelProviderSettings(settings).providers as ModelProviderProfileV1[]) {
-    const id = provider.id?.trim()
-    const baseUrl = provider.baseUrl?.trim()
-    const isAgentSdk = provider.kind === 'agent-sdk'
-    if (!id) continue
-    // agent-sdk providers carry no usable HTTP endpoint; everyone else needs one.
-    if (!baseUrl && !isAgentSdk) continue
-    // Keep the runtime's own provider in the explicit map too. GUI turns,
-    // Write, schedules, workflows, and subagent profiles all carry providerId;
-    // omitting the active provider makes those valid explicit requests look
-    // unknown even though the same credentials back the default client.
-    const rawApiKey = provider.apiKey?.trim() ?? ''
-    // Codex stores JSON OAuth creds in apiKey; unwrap to the bare token + the
-    // headers the backend requires. Plain keys (and agent-sdk tokens) pass through.
-    const resolved = resolveCodexOAuthApiKey(rawApiKey)
-    out[id] = {
-      apiKey: resolved.apiKey,
-      ...(baseUrl ? { baseUrl } : {}),
-      ...(provider.kind ? { kind: provider.kind } : {}),
-      ...(provider.endpointFormat ? { endpointFormat: provider.endpointFormat } : {}),
-      retry: provider.retry,
-      ...(proxyUrl ? { modelProxyUrl: proxyUrl } : {}),
-      ...(resolved.headers ? { headers: resolved.headers } : {})
-    }
-  }
-  return out
-}
-
-function tokenEconomyConfigForRuntime(
-  tokenEconomy: Pick<KunRuntimeSettingsV1, 'tokenEconomy'>['tokenEconomy'] | undefined,
-  existing: Record<string, unknown>
-): Record<string, unknown> {
-  const defaults = defaultKunTokenEconomySettings()
-  const normalized = {
-    ...defaults,
-    ...(tokenEconomy ?? {}),
-    historyHygiene: {
-      ...defaults.historyHygiene,
-      ...(tokenEconomy?.historyHygiene ?? {})
-    }
-  }
-  const existingHistoryHygiene = objectValue(existing.historyHygiene)
-  return {
-    ...existing,
-    enabled: normalized.enabled,
-    compressToolDescriptions: normalized.compressToolDescriptions,
-    compressToolResults: normalized.compressToolResults,
-    conciseResponses: normalized.conciseResponses,
-    historyHygiene: {
-      ...existingHistoryHygiene,
-      maxToolResultLines: normalized.historyHygiene.maxToolResultLines,
-      maxToolResultBytes: normalized.historyHygiene.maxToolResultBytes,
-      maxToolResultTokens: normalized.historyHygiene.maxToolResultTokens,
-      maxToolArgumentStringBytes: normalized.historyHygiene.maxToolArgumentStringBytes,
-      maxToolArgumentStringTokens: normalized.historyHygiene.maxToolArgumentStringTokens,
-      maxArrayItems: normalized.historyHygiene.maxArrayItems
-    }
-  }
-}
-
-function toolOutputLimitsConfigForRuntime(
-  toolOutputLimits: Pick<KunRuntimeSettingsV1, 'toolOutputLimits'>['toolOutputLimits'] | undefined
-): Record<string, unknown> {
-  return {
-    maxLines: toolOutputLimits?.maxLines,
-    maxBytes: toolOutputLimits?.maxBytes
-  }
-}
-
-function storageConfigForRuntime(
-  storage: Pick<KunRuntimeSettingsV1, 'storage'>['storage']
-): Record<string, unknown> {
-  const sqlitePath = storage.sqlitePath.trim()
-  return {
-    backend: storage.backend,
-    ...(sqlitePath ? { sqlitePath } : {})
-  }
-}
-
-function contextCompactionConfigForRuntime(
-  contextCompaction: Pick<KunRuntimeSettingsV1, 'contextCompaction'>['contextCompaction'],
-  existing: Record<string, unknown>
-): Record<string, unknown> {
-  return {
-    ...existing,
-    defaultSoftThreshold: contextCompaction.defaultSoftThreshold,
-    defaultHardThreshold: contextCompaction.defaultHardThreshold,
-    summaryMode: contextCompaction.summaryMode,
-    summaryTimeoutMs: contextCompaction.summaryTimeoutMs,
-    summaryMaxTokens: contextCompaction.summaryMaxTokens,
-    summaryInputMaxBytes: contextCompaction.summaryInputMaxBytes,
-    ...(contextCompaction.summaryModel ? { summaryModel: contextCompaction.summaryModel } : {}),
-    ...(contextCompaction.summaryProviderId ? { summaryProviderId: contextCompaction.summaryProviderId } : {})
-  }
-}
-
-/**
- * Build the kun `roles` config (internal-LLM model routing) from GUI settings.
- * Only non-empty fields are emitted so the strict RolesConfigSchema accepts the
- * result and a cleared field removes itself from config.json.
- */
-function rolesConfigForRuntime(
-  runtime: Pick<
-    KunRuntimeSettingsV1,
-    | 'smallModel'
-    | 'smallModelProviderId'
-    | 'titleModel'
-    | 'titleProviderId'
-    | 'summaryModel'
-    | 'summaryProviderId'
-    | 'codeReviewModel'
-    | 'codeReviewProviderId'
-    | 'titleReasoningEffort'
-    | 'summaryReasoningEffort'
-    | 'codeReviewReasoningEffort'
-  >
-): Record<string, string> {
-  const out: Record<string, string> = {}
-  const put = (key: string, value: string | undefined): void => {
-    const trimmed = typeof value === 'string' ? value.trim() : ''
-    if (trimmed) out[key] = trimmed
-  }
-  put('smallModel', runtime.smallModel)
-  put('smallModelProviderId', runtime.smallModelProviderId)
-  put('titleModel', runtime.titleModel)
-  put('titleProviderId', runtime.titleProviderId)
-  put('summaryModel', runtime.summaryModel)
-  put('summaryProviderId', runtime.summaryProviderId)
-  put('codeReviewModel', runtime.codeReviewModel)
-  put('codeReviewProviderId', runtime.codeReviewProviderId)
-  // Per-role reasoning depth. 'off' is the default and is intentionally omitted
-  // by the normalizer, so only an opted-in level (low/medium/high/max) is emitted.
-  put('titleReasoningEffort', runtime.titleReasoningEffort)
-  put('summaryReasoningEffort', runtime.summaryReasoningEffort)
-  put('codeReviewReasoningEffort', runtime.codeReviewReasoningEffort)
-  return out
 }
 
 function computerUseConfigForRuntime(
