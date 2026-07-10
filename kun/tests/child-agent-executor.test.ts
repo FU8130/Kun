@@ -362,6 +362,63 @@ describe('child agent executor', () => {
     expect(items.some((item) => item.kind === 'assistant_text')).toBe(true)
   })
 
+  it('uses the delegated security snapshot instead of broader executor defaults', async () => {
+    const eventBus = new InMemoryEventBus()
+    const sessionStore = new InMemorySessionStore()
+    const threadStore = new InMemoryThreadStore()
+    const events = new RuntimeEventRecorder({
+      eventBus,
+      sessionStore,
+      allocateSeq: (threadId) => eventBus.allocateSeq(threadId),
+      nowIso: () => '2026-06-03T00:00:00.000Z'
+    })
+    const seen: ModelRequest[] = []
+    const registry = new CapabilityRegistry([{
+      id: 'builtin',
+      kind: 'built-in',
+      enabled: true,
+      available: true,
+      tools: buildDefaultLocalTools()
+    }])
+    const executor = createChildAgentExecutor({
+      model: model([
+        { kind: 'assistant_text_delta', text: 'child answer' },
+        { kind: 'completed', stopReason: 'stop' }
+      ], seen),
+      toolHost: new LocalToolHost({ registry }),
+      prefix: createImmutablePrefix({ systemPrompt: 'child system' }),
+      defaultModel: 'child-test',
+      // These emulate permissive process-wide settings. A delegated child
+      // must use the parent-turn snapshot below instead.
+      approvalPolicy: 'auto',
+      sandboxMode: 'danger-full-access',
+      nowIso: () => '2026-06-03T00:00:00.000Z',
+      sessionStore,
+      threadStore,
+      events
+    })
+
+    await executor({
+      childId: 'child_security_snapshot',
+      parentThreadId: 'thr_parent',
+      parentTurnId: 'turn_parent',
+      prompt: 'Inspect only',
+      toolPolicy: 'inherit',
+      approvalPolicy: 'on-request',
+      sandboxMode: 'read-only',
+      signal: new AbortController().signal
+    })
+
+    const child = await threadStore.get('child_security_snapshot')
+    expect(child).toMatchObject({
+      approvalPolicy: 'on-request',
+      sandboxMode: 'read-only'
+    })
+    const toolNames = (seen[0]?.tools ?? []).map((tool) => tool.name)
+    expect(toolNames).not.toContain('bash')
+    expect(toolNames).not.toContain('write')
+  })
+
   it('gives an inherit child the parent agent full tool set (no forced read-only allowlist)', async () => {
     const seen: ModelRequest[] = []
     const registry = new CapabilityRegistry([{

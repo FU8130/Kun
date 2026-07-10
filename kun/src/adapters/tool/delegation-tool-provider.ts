@@ -71,6 +71,11 @@ export function buildDelegationToolProviders(runtime: DelegationRuntime | undefi
             ...(typeof args.model === 'string' ? { model: args.model } : {}),
             ...(typeof args.profile === 'string' ? { profile: args.profile } : {}),
             ...(inheritedProviderId ? { inheritedProviderId } : {}),
+            // A child must keep the effective policy of the turn that
+            // delegated it, rather than falling back to broader server
+            // defaults while queued or detached.
+            approvalPolicy: context.approvalPolicy,
+            ...(context.sandboxMode ? { sandboxMode: context.sandboxMode } : {}),
             ...(context.guiDesignCanvas ? { guiDesignCanvas: true } : {}),
             ...(args.detach === true ? { detach: true } : {}),
             ...(isPositiveInteger(args.tokenBudget) ? { tokenBudget: args.tokenBudget } : {}),

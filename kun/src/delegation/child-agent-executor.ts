@@ -114,11 +114,8 @@ export function createChildAgentExecutor(options: ChildAgentExecutorOptions): Ch
     // it can edit/run shell exactly like the parent. The capability registry
     // enforces an explicit list twice (dropped from the model's tool schema
     // and rejected at execute), but `inherit` leaves it undefined so nothing
-    // is forced. The child is not an escalation: it runs under the parent
-    // thread's approvalPolicy/sandboxMode (set on the thread below from
-    // options.approvalPolicy/sandboxMode, which the runtime factory threads
-    // from the parent runtime), so a read-only parent still yields a
-    // read-only child.
+    // is forced. The child is not an escalation: the per-run parent security
+    // snapshot below takes precedence over broader runtime defaults.
     const forcedAllowedToolNames = input.allowedTools
       ? [...input.allowedTools]
       : input.toolPolicy === 'readOnly'
@@ -172,14 +169,16 @@ export function createChildAgentExecutor(options: ChildAgentExecutorOptions): Ch
     })
 
     const model = input.model?.trim() || options.defaultModel
+    const approvalPolicy = input.approvalPolicy ?? options.approvalPolicy ?? 'auto'
+    const sandboxMode = input.sandboxMode ?? options.sandboxMode
     const title = childThreadTitle(input.childId, input.label, input.profile)
     const thread = await threads.create({
       title,
       workspace: input.workspace?.trim() || '~',
       model,
       mode: 'agent',
-      approvalPolicy: options.approvalPolicy ?? 'auto',
-      ...(options.sandboxMode ? { sandboxMode: options.sandboxMode } : {}),
+      approvalPolicy,
+      ...(sandboxMode ? { sandboxMode } : {}),
       // Route the child to the profile's provider. ThreadService threads
       // providerId into every ModelRequest, and the executor's model is the
       // MultiProviderModelClient, so this single field is all routing needs.

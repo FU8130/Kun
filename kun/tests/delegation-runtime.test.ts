@@ -214,6 +214,42 @@ describe('DelegationRuntime', () => {
     expect((await runtime.diagnostics('thr_provider')).childRuns[0]?.providerId).toBe('opencode-go')
   })
 
+  it('preserves the delegating turn approval and sandbox policies', async () => {
+    const seen: Array<{ approvalPolicy: string | undefined; sandboxMode: string | undefined }> = []
+    const runtime = createRuntime({
+      executor: async (input) => {
+        seen.push({
+          approvalPolicy: input.approvalPolicy,
+          sandboxMode: input.sandboxMode
+        })
+        return { summary: 'done' }
+      }
+    })
+    const host = new LocalToolHost({
+      registry: new CapabilityRegistry(buildDelegationToolProviders(runtime))
+    })
+
+    await host.execute({
+      callId: 'call_policy',
+      toolName: 'delegate_task',
+      arguments: { label: 'Policy', prompt: 'Inspect without changing files' }
+    }, {
+      threadId: 'thr_policy',
+      turnId: 'turn_policy',
+      workspace: '/tmp/ws',
+      approvalPolicy: 'on-request',
+      sandboxMode: 'read-only',
+      abortSignal: new AbortController().signal,
+      awaitApproval: async () => 'allow'
+    })
+
+    expect(seen).toEqual([{ approvalPolicy: 'on-request', sandboxMode: 'read-only' }])
+    expect((await runtime.diagnostics('thr_policy')).childRuns[0]).toMatchObject({
+      approvalPolicy: 'on-request',
+      sandboxMode: 'read-only'
+    })
+  })
+
   it('keeps a subagent profile providerId ahead of the inherited parent provider', async () => {
     const seen: Array<string | undefined> = []
     const runtime = createRuntime({

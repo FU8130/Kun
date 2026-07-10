@@ -2,6 +2,12 @@ import { chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { SubagentToolPolicy, type SubagentMode, type SubagentProfileConfig, type SubagentsCapabilityConfig } from '../contracts/capabilities.js'
+import {
+  ApprovalPolicySchema,
+  SandboxModeSchema,
+  type ApprovalPolicy,
+  type SandboxMode
+} from '../contracts/policy.js'
 import type { RuntimeEventRecorder } from '../services/runtime-event-recorder.js'
 import type { UsageSnapshot } from '../contracts/usage.js'
 import type { ThreadStore } from '../ports/thread-store.js'
@@ -43,6 +49,9 @@ export const ChildRunRecord = z.object({
   profile: z.string().optional(),
   /** Effective tool policy applied to the child (read-only vs inherited). */
   toolPolicy: SubagentToolPolicy.optional(),
+  /** Parent policy captured when the child was created. */
+  approvalPolicy: ApprovalPolicySchema.optional(),
+  sandboxMode: SandboxModeSchema.optional(),
   /** True when this child is detached from the parent turn lifecycle. */
   detached: z.boolean().optional(),
   status: z.enum(['queued', 'running', 'completed', 'failed', 'aborted']),
@@ -93,6 +102,9 @@ export type ChildRunExecutor = (input: {
   /** Skill ids blocked for this child (deny-list; catalog + activation + load_skill). */
   blockedSkills?: string[]
   toolPolicy: SubagentToolPolicy
+  /** Parent security snapshot; it takes precedence over executor defaults. */
+  approvalPolicy?: ApprovalPolicy
+  sandboxMode?: SandboxMode
   promptPreamble?: string
   /** True when the parent turn is a GUI design-canvas turn. */
   guiDesignCanvas?: boolean
@@ -221,6 +233,9 @@ export class DelegationRuntime {
     providerId?: string
     /** Parent turn/thread provider id inherited by delegate_task when no profile overrides it. */
     inheritedProviderId?: string
+    /** Effective parent policy captured by the delegating tool call. */
+    approvalPolicy?: ApprovalPolicy
+    sandboxMode?: SandboxMode
     profile?: string
     /** Forward GUI design-canvas scope into the child turn when present. */
     guiDesignCanvas?: boolean
@@ -295,6 +310,8 @@ export class DelegationRuntime {
       providerId: resolvedProviderId,
       profile: profileName,
       toolPolicy,
+      ...(input.approvalPolicy ? { approvalPolicy: input.approvalPolicy } : {}),
+      ...(input.sandboxMode ? { sandboxMode: input.sandboxMode } : {}),
       tokenBudget,
       timeBudgetMs,
       returnFormat,
@@ -337,6 +354,8 @@ export class DelegationRuntime {
         resolvedBlockedMcpServers,
         resolvedBlockedSkills,
         promptPreamble,
+        approvalPolicy: input.approvalPolicy,
+        sandboxMode: input.sandboxMode,
         guiDesignCanvas: input.guiDesignCanvas === true,
         resolvedReasoningEffort,
         tokenBudget,
@@ -397,6 +416,8 @@ export class DelegationRuntime {
         ...(resolvedBlockedMcpServers ? { blockedMcpServers: resolvedBlockedMcpServers } : {}),
         ...(resolvedBlockedSkills ? { blockedSkills: resolvedBlockedSkills } : {}),
         toolPolicy,
+        ...(input.approvalPolicy ? { approvalPolicy: input.approvalPolicy } : {}),
+        ...(input.sandboxMode ? { sandboxMode: input.sandboxMode } : {}),
         ...(promptPreamble ? { promptPreamble } : {}),
         ...(input.guiDesignCanvas ? { guiDesignCanvas: true } : {}),
         ...(resolvedReasoningEffort ? { reasoningEffort: resolvedReasoningEffort } : {}),
@@ -470,6 +491,8 @@ export class DelegationRuntime {
     resolvedBlockedMcpServers: string[] | undefined
     resolvedBlockedSkills: string[] | undefined
     promptPreamble: string | undefined
+    approvalPolicy: ApprovalPolicy | undefined
+    sandboxMode: SandboxMode | undefined
     guiDesignCanvas: boolean
     resolvedReasoningEffort: string | undefined
     tokenBudget: number | undefined
@@ -520,6 +543,8 @@ export class DelegationRuntime {
         ...(args.resolvedBlockedMcpServers ? { blockedMcpServers: args.resolvedBlockedMcpServers } : {}),
         ...(args.resolvedBlockedSkills ? { blockedSkills: args.resolvedBlockedSkills } : {}),
         toolPolicy: args.toolPolicy,
+        ...(args.approvalPolicy ? { approvalPolicy: args.approvalPolicy } : {}),
+        ...(args.sandboxMode ? { sandboxMode: args.sandboxMode } : {}),
         ...(args.promptPreamble ? { promptPreamble: args.promptPreamble } : {}),
         ...(args.guiDesignCanvas ? { guiDesignCanvas: true } : {}),
         ...(args.resolvedReasoningEffort ? { reasoningEffort: args.resolvedReasoningEffort } : {}),
