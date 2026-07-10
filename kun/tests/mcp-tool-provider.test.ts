@@ -31,6 +31,7 @@ function buildContext(workspace: string): ToolHostContext {
     workspace,
     threadMode: 'agent',
     approvalPolicy: 'auto',
+    sandboxMode: 'danger-full-access',
     abortSignal: new AbortController().signal,
     awaitApproval: async () => 'allow'
   }

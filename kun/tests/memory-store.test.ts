@@ -243,7 +243,7 @@ describe('Memory store and recall', () => {
     await h2.loop.runTurn(h2.threadId, h2.turnId)
     const finalInstructions = seenRequests.at(-1)?.contextInstructions?.join('\n') ?? ''
     expect(finalInstructions).not.toContain(memory.id)
-    expect(finalInstructions).toContain('<shell_environment>')
+    expect(finalInstructions).toContain('Runtime context for this model request:')
   })
 
   it('injects project memory into new threads only inside the same project', async () => {

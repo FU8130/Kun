@@ -43,6 +43,7 @@ function ctx(overrides: Partial<ToolHostContext> = {}): ToolHostContext {
     turnId: 'u',
     workspace: '/ws',
     approvalPolicy: 'auto',
+    sandboxMode: 'danger-full-access',
     abortSignal: new AbortController().signal,
     awaitApproval: async () => 'allow',
     ...overrides

@@ -19,6 +19,7 @@ function buildContext(overrides: Partial<ToolHostContext> = {}): ToolHostContext
     turnId: 'turn_1',
     workspace: '/tmp/ws',
     approvalPolicy: 'on-request',
+    sandboxMode: 'danger-full-access',
     abortSignal: new AbortController().signal,
     awaitApproval: async () => 'allow',
     ...overrides
