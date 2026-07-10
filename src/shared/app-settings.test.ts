@@ -336,6 +336,75 @@ describe('log retention settings', () => {
   })
 })
 
+describe('runtime model provider selection', () => {
+  it('repairs a legacy provider/model mismatch when the model has one owner', () => {
+    const raw = settings()
+    const codexPreset = getModelProviderPreset('codex')
+    const codex = codexPreset ? modelProviderPresetProfile(codexPreset) : null
+    expect(codex).not.toBeNull()
+    raw.provider.providers = [...raw.provider.providers, codex!]
+    raw.agents.kun.providerId = 'deepseek'
+    raw.agents.kun.model = 'gpt-5.3-codex-spark'
+
+    const normalized = normalizeAppSettings(raw)
+
+    expect(normalized.agents.kun.providerId).toBe('codex')
+    expect(normalized.agents.kun.model).toBe('gpt-5.3-codex-spark')
+  })
+
+  it('falls back to the selected provider model instead of retaining an ambiguous mismatch', () => {
+    const raw = settings()
+    const codex = modelProviderPresetProfile(getModelProviderPreset('codex')!)
+    const duplicate = {
+      ...codex,
+      id: 'codex-mirror',
+      name: 'Codex Mirror'
+    }
+    raw.provider.providers = [...raw.provider.providers, codex, duplicate]
+    raw.agents.kun.providerId = 'deepseek'
+    raw.agents.kun.model = 'gpt-5.3-codex-spark'
+
+    const normalized = normalizeAppSettings(raw)
+
+    expect(normalized.agents.kun.providerId).toBe('deepseek')
+    expect(normalized.agents.kun.model).toBe('deepseek-v4-flash')
+  })
+
+  it('repairs partial subagent profile selections into complete pairs', () => {
+    const raw = settings()
+    const codex = modelProviderPresetProfile(getModelProviderPreset('codex')!)
+    raw.provider.providers = [...raw.provider.providers, codex]
+    raw.agents.kun.subagents = {
+      enabled: true,
+      profiles: [
+        {
+          id: 'model-only', enabled: true, name: '', mode: 'subagent', toolPolicy: 'inherit',
+          model: 'gpt-5.3-codex-spark'
+        },
+        {
+          id: 'provider-only', enabled: true, name: '', mode: 'subagent', toolPolicy: 'inherit',
+          providerId: 'deepseek'
+        }
+      ]
+    }
+
+    const normalized = normalizeAppSettings(raw)
+
+    expect(normalized.agents.kun.subagents?.profiles).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'model-only',
+        model: 'gpt-5.3-codex-spark',
+        providerId: 'codex'
+      }),
+      expect.objectContaining({
+        id: 'provider-only',
+        model: 'deepseek-v4-flash',
+        providerId: 'deepseek'
+      })
+    ]))
+  })
+})
+
 describe('app behavior settings', () => {
   it('defaults desktop behavior to off', () => {
     const raw = {

@@ -61,14 +61,18 @@ describe('MultiProviderModelClient', () => {
     })
     const router = new MultiProviderModelClient({
       default: defaultClient,
-      providers: new Map([['minimax-token-plan', minimaxClient]])
+      providers: new Map([
+        ['deepseek', defaultClient],
+        ['minimax-token-plan', minimaxClient]
+      ])
     })
 
     await drain(router.stream(request('deepseek-v4-pro')))
+    await drain(router.stream(request('deepseek-v4-pro', 'deepseek')))
     await drain(router.stream(request('MiniMax-M3', 'MiniMax-Token-Plan')))
     expect(() => router.stream(request('deepseek-v4-pro', 'unknown-provider'))).toThrow(/unknown model provider/)
 
-    expect(defaultCalls).toHaveLength(1)
+    expect(defaultCalls).toHaveLength(2)
     expect(defaultCalls[0].url).toContain('default.example')
     expect(defaultCalls[0].authorization).toBe('Bearer sk-default')
     expect(minimaxCalls).toHaveLength(1)

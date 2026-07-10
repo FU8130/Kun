@@ -205,6 +205,7 @@ export function createChildAgentExecutor(options: ChildAgentExecutorOptions): Ch
       request: {
         prompt,
         model,
+        ...(input.providerId ? { providerId: input.providerId } : {}),
         mode: 'agent',
         reasoningEffort: normalizeRoleReasoningEffort(input.reasoningEffort),
         ...(input.guiDesignCanvas ? { guiDesignCanvas: true } : {}),

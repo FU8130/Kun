@@ -233,6 +233,8 @@ export class DelegationRuntime {
     workspace?: string
     model?: string
     providerId?: string
+    /** Effective parent turn/thread model inherited together with inheritedProviderId. */
+    inheritedModel?: string
     /** Parent turn/thread provider id inherited by delegate_task when no profile overrides it. */
     inheritedProviderId?: string
     /** Effective parent policy captured by the delegating tool call. */
@@ -280,8 +282,16 @@ export class DelegationRuntime {
       throw new Error(`unknown subagent profile: ${profileName}`)
     }
     const toolPolicy = profile?.toolPolicy ?? config.defaultToolPolicy
-    const resolvedModel = input.model?.trim() || profile?.model
-    const resolvedProviderId = input.providerId?.trim() || profile?.providerId || input.inheritedProviderId?.trim()
+    const selection = resolveChildModelSelection({
+      explicitModel: input.model,
+      explicitProviderId: input.providerId,
+      profileModel: profile?.model,
+      profileProviderId: profile?.providerId,
+      inheritedModel: input.inheritedModel,
+      inheritedProviderId: input.inheritedProviderId
+    })
+    const resolvedModel = selection.model
+    const resolvedProviderId = selection.providerId
     const resolvedSystemPrompt = profile?.systemPrompt
     const resolvedAllowedTools = profile?.allowedTools
     const resolvedBlockedTools = profile?.blockedTools
@@ -858,6 +868,22 @@ export class DelegationRuntime {
 
   private now(): string {
     return this.options.nowIso?.() ?? new Date().toISOString()
+  }
+}
+
+function resolveChildModelSelection(input: {
+  explicitModel?: string
+  explicitProviderId?: string
+  profileModel?: string
+  profileProviderId?: string
+  inheritedModel?: string
+  inheritedProviderId?: string
+}): { model?: string; providerId?: string } {
+  const model = input.explicitModel?.trim() || input.profileModel?.trim() || input.inheritedModel?.trim()
+  const providerId = input.explicitProviderId?.trim() || input.profileProviderId?.trim() || input.inheritedProviderId?.trim()
+  return {
+    ...(model ? { model } : {}),
+    ...(providerId ? { providerId } : {})
   }
 }
 

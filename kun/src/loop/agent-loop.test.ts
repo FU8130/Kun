@@ -123,6 +123,30 @@ class CapturingCompleteModel implements ModelClient {
   }
 }
 
+class RoutedFailureModel implements ModelClient {
+  readonly provider = 'compat-multi'
+  readonly model = 'gpt-5.3-codex-spark'
+  readonly config = {
+    model: this.model,
+    baseUrl: 'https://chatgpt.example/codex',
+    endpointFormat: 'custom_endpoint'
+  }
+
+  configFor(providerId?: string) {
+    if (providerId !== 'deepseek') throw new Error(`unknown model provider: ${providerId}`)
+    return {
+      model: 'deepseek-v4-pro',
+      baseUrl: 'https://api.deepseek.com',
+      endpointFormat: 'chat_completions'
+    }
+  }
+
+  async *stream(_request: ModelRequest): AsyncIterable<ModelStreamChunk> {
+    throw new Error('upstream transport failed')
+    yield { kind: 'completed', stopReason: 'stop' }
+  }
+}
+
 type SvgModelAction = 'stop' | 'edit' | 'validate'
 
 class ScriptedSvgModel implements ModelClient {
@@ -454,6 +478,74 @@ describe('AgentLoop interruption', () => {
     await expect(loop.runTurn(threadId, started.turnId)).resolves.toBe('failed')
     const eventsAfter = await sessionStore.loadEventsSince(threadId, 0)
     expect(eventsAfter).toContainEqual(expect.objectContaining({ kind: 'error', code: 'turn_step_limit' }))
+  })
+
+  it('reports the effective routed model and provider instead of the runtime default', async () => {
+    const sessionStore = new InMemorySessionStore()
+    const threadStore = new InMemoryThreadStore()
+    const eventBus = new InMemoryEventBus()
+    const inflight = new InflightTracker()
+    const steering = new SteeringQueue()
+    const ids = new SequentialIdGenerator()
+    const nowIso = () => '2026-07-11T00:00:00.000Z'
+    const events = new RuntimeEventRecorder({
+      eventBus,
+      sessionStore,
+      allocateSeq: (id) => eventBus.allocateSeq(id),
+      nowIso
+    })
+    const model = new RoutedFailureModel()
+    const turns = new TurnService({
+      threadStore,
+      sessionStore,
+      events,
+      inflight,
+      steering,
+      compactor: new ContextCompactor(),
+      ids,
+      nowIso
+    })
+    const loop = new AgentLoop({
+      threadStore,
+      sessionStore,
+      approvalGate: new AllowApprovalGate(),
+      userInputGate: new NoopUserInputGate(),
+      model,
+      toolHost: new LocalToolHost({ tools: [] }),
+      usage: new UsageService(),
+      events,
+      turns,
+      inflight,
+      steering,
+      compactor: new ContextCompactor(),
+      prefix: createImmutablePrefix({ systemPrompt: 'test system prompt' }),
+      ids,
+      nowIso
+    })
+    const threadId = 'child_routed_failure'
+    await threadStore.upsert(createThreadRecord({
+      id: threadId,
+      title: 'Routed child',
+      workspace: '/tmp',
+      model: 'deepseek-v4-pro',
+      providerId: 'deepseek'
+    }))
+    const started = await turns.startTurn({
+      threadId,
+      request: {
+        prompt: 'fail accurately',
+        model: 'deepseek-v4-pro',
+        providerId: 'deepseek'
+      }
+    })
+
+    await expect(loop.runTurn(threadId, started.turnId)).resolves.toBe('failed')
+    const failed = (await threadStore.get(threadId))?.turns[0]
+    expect(failed?.error).toContain('model=deepseek-v4-pro')
+    expect(failed?.error).toContain('providerId=deepseek')
+    expect(failed?.error).toContain('baseUrl=https://api.deepseek.com')
+    expect(failed?.error).toContain('endpointFormat=chat_completions')
+    expect(failed?.error).not.toContain('model=gpt-5.3-codex-spark')
   })
 })
 

@@ -904,7 +904,6 @@ function modelConfigProfilesFromProviderProfiles(
  */
 function providersConfigForRuntime(settings: AppSettingsV1): Record<string, Record<string, unknown>> {
   const out: Record<string, Record<string, unknown>> = {}
-  const runtimeProviderId = getKunRuntimeSettings(settings).providerId.trim()
   const proxyUrl = resolveModelProviderProxyUrl(settings)
   for (const provider of getModelProviderSettings(settings).providers as ModelProviderProfileV1[]) {
     const id = provider.id?.trim()
@@ -913,12 +912,10 @@ function providersConfigForRuntime(settings: AppSettingsV1): Record<string, Reco
     if (!id) continue
     // agent-sdk providers carry no usable HTTP endpoint; everyone else needs one.
     if (!baseUrl && !isAgentSdk) continue
-    // The runtime's own provider is already wired via the default client
-    // (DEEPSEEK_API_KEY + serve.headers); we normally skip it here — EXCEPT
-    // agent-sdk: its turns must be routable to the embedded SDK via
-    // `serve.providers`, otherwise they fall back to the HTTP default client and
-    // 401 on api.anthropic.com (invalid x-api-key).
-    if (id === runtimeProviderId && !isAgentSdk) continue
+    // Keep the runtime's own provider in the explicit map too. GUI turns,
+    // Write, schedules, workflows, and subagent profiles all carry providerId;
+    // omitting the active provider makes those valid explicit requests look
+    // unknown even though the same credentials back the default client.
     const rawApiKey = provider.apiKey?.trim() ?? ''
     // Codex stores JSON OAuth creds in apiKey; unwrap to the bare token + the
     // headers the backend requires. Plain keys (and agent-sdk tokens) pass through.

@@ -24,7 +24,8 @@ export function buildDelegationToolProviders(runtime: DelegationRuntime | undefi
             label: { type: 'string', description: 'A 2-4 word name for this subagent, shown in the UI as its title (e.g. "审查登录流程", "fix failing test", "greet user"). ALWAYS provide it so the user can tell subagents apart, especially when delegating several in parallel. Prefer a distinct label per call.' },
             prompt: { type: 'string', description: 'The task for the child agent.' },
             workspace: { type: 'string' },
-            model: { type: 'string', description: 'Override the child model. Defaults to the profile model or server default.' },
+            model: { type: 'string', description: 'Override the child model. Must be supplied together with providerId.' },
+            providerId: { type: 'string', description: 'Override the child model provider. Must be supplied together with model.' },
             profile: profileNames.length
               ? { type: 'string', enum: profileNames, description: 'Subagent role to apply (model, preamble, tool policy).' }
               : { type: 'string', description: 'Subagent role to apply (model, preamble, tool policy).' },
@@ -61,15 +62,25 @@ export function buildDelegationToolProviders(runtime: DelegationRuntime | undefi
           if (args.timeBudgetMs !== undefined && !isPositiveInteger(args.timeBudgetMs)) {
             return { output: { error: 'timeBudgetMs must be a positive integer' }, isError: true }
           }
+          const explicitModel = typeof args.model === 'string' ? args.model.trim() : ''
+          const explicitProviderId = typeof args.providerId === 'string' ? args.providerId.trim() : ''
+          if (Boolean(explicitModel) !== Boolean(explicitProviderId)) {
+            return {
+              output: { error: 'model and providerId overrides must be supplied together' },
+              isError: true
+            }
+          }
           const inheritedProviderId = context.modelProviderId?.trim()
+          const inheritedModel = context.model?.id?.trim()
           const record = await runtime.runChild({
             parentThreadId: context.threadId,
             parentTurnId: context.turnId,
             label: typeof args.label === 'string' ? args.label : undefined,
             prompt,
             workspace: typeof args.workspace === 'string' ? args.workspace : context.workspace,
-            ...(typeof args.model === 'string' ? { model: args.model } : {}),
+            ...(explicitModel ? { model: explicitModel, providerId: explicitProviderId } : {}),
             ...(typeof args.profile === 'string' ? { profile: args.profile } : {}),
+            ...(inheritedModel ? { inheritedModel } : {}),
             ...(inheritedProviderId ? { inheritedProviderId } : {}),
             // A child must keep the effective policy of the turn that
             // delegated it, rather than falling back to broader server

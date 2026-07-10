@@ -131,7 +131,9 @@ export function createAppActions(options: CreateAppActionsOptions): Pick<
       set({ composerModel: modelId, composerProviderId: nextProviderId })
       const trimmed = modelId.trim()
       if (!activeThreadId && trimmed && trimmed.toLowerCase() !== 'auto' && typeof window.kunGui !== 'undefined') {
-        void window.kunGui.saveSettingsSilent({ agents: { kun: { model: trimmed } } })
+        void window.kunGui.saveSettingsSilent({
+          agents: { kun: { model: trimmed, providerId: nextProviderId } }
+        })
       }
     },
 

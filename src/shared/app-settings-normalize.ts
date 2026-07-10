@@ -16,6 +16,8 @@ import {
   type ClawSettingsPatchV1,
   type DesignSettingsPatchV1,
   type GuiUpdateConfigV1,
+  type KunRuntimeSettingsV1,
+  type ModelProviderProfileV1,
   type NotificationConfigV1,
   type ScheduleSettingsPatchV1,
   WINDOW_CLOSE_ACTIONS,
@@ -62,8 +64,12 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     terminal?: TerminalSettingsPatchV1
   }
   const providerSettings = normalizeModelProviderSettings(maybeSettings.provider)
-  const runtime = getKunRuntimeSettings(maybeSettings)
   const rawKun = maybeSettings.agents?.kun
+  const runtime = normalizeRuntimeModelProviderSelection(
+    getKunRuntimeSettings(maybeSettings),
+    providerSettings.providers,
+    typeof rawKun?.model === 'string' && Boolean(rawKun.model.trim())
+  )
   const rawMediaPatch: Parameters<typeof defaultMiniMaxMediaGenerationKunPatch>[0]['kunPatch'] = {
     ...(rawKun?.textToSpeech !== undefined ? { textToSpeech: rawKun.textToSpeech } : {}),
     ...(rawKun?.musicGeneration !== undefined ? { musicGeneration: rawKun.musicGeneration } : {}),
@@ -123,6 +129,75 @@ export function normalizeAppSettings(settings: AppSettingsV1): AppSettingsV1 {
     codePromptPrefix: typeof maybeSettings.codePromptPrefix === 'string' ? maybeSettings.codePromptPrefix : '',
     disabledSkillIds: normalizeDisabledSkillIds(maybeSettings.disabledSkillIds)
   }
+}
+
+function normalizeRuntimeModelProviderSelection(
+  runtime: KunRuntimeSettingsV1,
+  providers: readonly ModelProviderProfileV1[],
+  preferModelOwner: boolean
+): KunRuntimeSettingsV1 {
+  if (providers.length === 0) return runtime
+  const main = normalizeModelProviderPair(runtime.providerId, runtime.model, providers, preferModelOwner)
+  const profiles = runtime.subagents?.profiles.map((profile) => {
+    const model = profile.model?.trim() ?? ''
+    const providerId = profile.providerId?.trim() ?? ''
+    if (!model && !providerId) return profile
+    const normalized = normalizeModelProviderPair(providerId, model, providers, Boolean(model))
+    return {
+      ...profile,
+      model: normalized.model,
+      providerId: normalized.providerId || providers[0].id
+    }
+  })
+  return {
+    ...runtime,
+    ...main,
+    ...(runtime.subagents && profiles
+      ? { subagents: { ...runtime.subagents, profiles } }
+      : {})
+  }
+}
+
+function normalizeModelProviderPair(
+  providerInput: string,
+  modelInput: string,
+  providers: readonly ModelProviderProfileV1[],
+  preferModelOwner: boolean
+): { providerId: string; model: string } {
+  const providerId = providerInput.trim()
+  const model = modelInput.trim()
+  const selected = providerId
+    ? providers.find((provider) => provider.id === providerId)
+    : providers[0]
+  if (selected && providerContainsModel(selected, model)) return { providerId, model }
+  if (providerId && !selected) return { providerId, model }
+
+  const matches = providers.filter((provider) => providerContainsModel(provider, model))
+  if ((!providerId || preferModelOwner) && matches.length === 1) {
+    return { providerId: matches[0].id, model }
+  }
+
+  const fallbackProvider = selected ?? providers[0]
+  const fallbackModel = fallbackProvider.models.find((candidate) => candidate.trim())?.trim()
+  if (!fallbackModel) return { providerId, model }
+  return {
+    providerId: providerId
+      ? fallbackProvider.id
+      : fallbackProvider === providers[0]
+        ? ''
+        : fallbackProvider.id,
+    model: fallbackModel
+  }
+}
+
+function providerContainsModel(provider: ModelProviderProfileV1, modelId: string): boolean {
+  const model = modelId.trim().toLowerCase()
+  if (!model) return false
+  if (provider.models.some((candidate) => candidate.trim().toLowerCase() === model)) return true
+  return Object.entries(provider.modelProfiles).some(([profileModel, profile]) =>
+    profileModel.trim().toLowerCase() === model ||
+    profile.aliases?.some((alias) => alias.trim().toLowerCase() === model) === true
+  )
 }
 
 export function normalizeGitBranchPrefix(value: unknown): string {

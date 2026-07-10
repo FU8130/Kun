@@ -50,7 +50,7 @@ import { HistoryCompactionService } from './history-compaction-service.js'
 import { ToolStormBreaker, type ToolStormBreakerOptions } from './tool-storm-breaker.js'
 import { LoopTelemetry } from './loop-telemetry.js'
 import { ModelRoundEngine } from './model-round-engine.js'
-import { sanitizeProviderBaseUrl } from './model-client-diagnostics.js'
+import { modelClientDiagnostics } from './model-client-diagnostics.js'
 import { InteractiveToolBridge } from './interactive-tool-bridge.js'
 import { TurnContextResolver } from './turn-context-resolver.js'
 import { TurnFinalizer, type TurnFinalizationRequest } from './turn-finalizer.js'
@@ -544,11 +544,11 @@ export class AgentLoop {
       const raw = error instanceof Error ? error.message : String(error)
       // Best-effort enrichment so the renderer can show "what failed where"
       // instead of the bare "Kun turn failed" string. See issue #26.
-      const modelInfo = this.opts.model && 'config' in this.opts.model
-        ? (this.opts.model as { config: { model?: string; baseUrl?: string } }).config
-        : undefined
-      const modelName = modelInfo?.model ?? 'unknown'
-      const provider = modelInfo?.baseUrl ? sanitizeProviderBaseUrl(modelInfo.baseUrl) : 'unknown'
+      const thread = await this.opts.threadStore.get(threadId)
+      const turn = thread?.turns.find((candidate) => candidate.id === turnId)
+      const modelName = turn?.model?.trim() || thread?.model?.trim() || this.opts.model.model || 'unknown'
+      const providerId = turn?.providerId?.trim() || thread?.providerId?.trim()
+      const diagnostics = modelClientDiagnostics(this.opts.model, providerId)
       const stack = error instanceof Error
         ? (error.stack?.split('\n').slice(0, 3).join(' | ') ?? '')
         : ''
@@ -557,7 +557,9 @@ export class AgentLoop {
         `turn=${turnId}`,
         `thread=${threadId}`,
         `model=${modelName}`,
-        `provider=${provider}`,
+        `providerId=${providerId || 'default'}`,
+        diagnostics.providerBaseUrl ? `baseUrl=${diagnostics.providerBaseUrl}` : '',
+        diagnostics.endpointFormat ? `endpointFormat=${diagnostics.endpointFormat}` : '',
         `error=${raw}`,
         stack ? `stack=${stack}` : ''
       ].filter(Boolean).join(' ')

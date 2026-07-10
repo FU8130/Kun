@@ -23,7 +23,23 @@ export function modelClientDiagnostics(
       model?: string
     } | undefined
   }
-  const config = client.configFor?.(providerId) ?? client.config
+  let config: {
+    baseUrl?: string
+    endpointFormat?: string
+    model?: string
+  } | undefined
+  if (client.configFor) {
+    try {
+      config = client.configFor(providerId)
+    } catch {
+      // Diagnostics must never replace the original routing error. In
+      // particular, an unknown explicit provider is expected to throw from the
+      // routing boundary, not while we are merely collecting log metadata.
+      config = providerId?.trim() ? undefined : client.config
+    }
+  } else {
+    config = client.config
+  }
   return {
     provider: client.provider,
     ...(config?.baseUrl ? { providerBaseUrl: sanitizeProviderBaseUrl(config.baseUrl) } : {}),

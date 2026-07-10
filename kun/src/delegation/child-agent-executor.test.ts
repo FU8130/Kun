@@ -67,6 +67,8 @@ describe('createChildAgentExecutor', () => {
       parentTurnId: 'turn_parent',
       prompt: 'keep streaming until interrupted',
       workspace: '/tmp/workspace',
+      model: 'deepseek-v4-pro',
+      providerId: 'deepseek',
       toolPolicy: 'readOnly',
       signal: parent.signal
     })
@@ -83,6 +85,10 @@ describe('createChildAgentExecutor', () => {
 
     expect(result).toBe('rejected')
     expect(model.abortObserved).toBe(true)
+    expect(model.requests[0]).toMatchObject({
+      model: 'deepseek-v4-pro',
+      providerId: 'deepseek'
+    })
     expect((await threadStore.get('child_abort'))?.status).toBe('idle')
     expect((await threadStore.get('child_abort'))?.turns[0]?.status).toBe('aborted')
   })

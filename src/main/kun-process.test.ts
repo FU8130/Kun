@@ -680,7 +680,12 @@ describe('syncGuiManagedKunConfig', () => {
       model: 'glm-5.2',
       modelProxyUrl: 'socks5://127.0.0.1:1080'
     })
-    expect(parsed.serve.providers?.custom).toBeUndefined()
+    expect(parsed.serve.providers?.custom).toMatchObject({
+      apiKey: 'sk-newapi',
+      baseUrl: 'https://newapi.example/v1',
+      endpointFormat: 'chat_completions',
+      modelProxyUrl: 'socks5://127.0.0.1:1080'
+    })
     expect(KunConfigSchema.safeParse(parsed).success).toBe(true)
   })
 

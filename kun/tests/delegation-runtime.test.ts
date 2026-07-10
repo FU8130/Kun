@@ -214,6 +214,43 @@ describe('DelegationRuntime', () => {
     expect((await runtime.diagnostics('thr_provider')).childRuns[0]?.providerId).toBe('opencode-go')
   })
 
+  it('rejects a user-facing delegate_task model override without its provider pair', async () => {
+    const runtime = createRuntime()
+    const host = new LocalToolHost({
+      registry: new CapabilityRegistry(buildDelegationToolProviders(runtime))
+    })
+
+    const result = await host.execute({
+      callId: 'call_partial_model',
+      toolName: 'delegate_task',
+      arguments: { prompt: 'Check routing', model: 'gpt-5.3-codex-spark' }
+    }, {
+      threadId: 'thr_partial_model',
+      turnId: 'turn_partial_model',
+      workspace: '/tmp/ws',
+      model: {
+        id: 'deepseek-v4-pro',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+        supportsToolCalling: true,
+        contextWindowTokens: 128000,
+        messageParts: ['text']
+      },
+      modelProviderId: 'deepseek',
+      approvalPolicy: 'auto',
+      abortSignal: new AbortController().signal,
+      awaitApproval: async () => 'allow'
+    })
+
+    expect(result.item).toMatchObject({ kind: 'tool_result', isError: true })
+    if (result.item.kind === 'tool_result') {
+      expect(result.item.output).toMatchObject({
+        error: 'model and providerId overrides must be supplied together'
+      })
+    }
+    expect((await runtime.diagnostics('thr_partial_model')).childRuns).toEqual([])
+  })
+
   it('preserves the delegating turn approval and sandbox policies', async () => {
     const seen: Array<{ approvalPolicy: string | undefined; sandboxMode: string | undefined }> = []
     const runtime = createRuntime({
