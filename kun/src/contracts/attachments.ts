@@ -1,5 +1,9 @@
 import { z } from 'zod'
 
+/** Hard request-level backstops; per-file limits remain capability-configured. */
+export const MAX_TURN_ATTACHMENT_IDS = 8
+export const MAX_TURN_ATTACHMENT_BYTES = 20 * 1024 * 1024
+
 export const AttachmentTextFallback = z.object({
   dataBase64: z.string().min(1),
   mimeType: z.string().min(1),

@@ -114,6 +114,17 @@ describe('contracts', () => {
     expect(result.success).toBe(false)
   })
 
+  it('bounds and deduplicates start-turn attachment ids', () => {
+    expect(StartTurnRequest.safeParse({
+      prompt: 'too many attachments',
+      attachmentIds: Array.from({ length: 9 }, (_value, index) => `att_${index}`)
+    }).success).toBe(false)
+    expect(StartTurnRequest.safeParse({
+      prompt: 'duplicate attachment',
+      attachmentIds: ['att_same', 'att_same']
+    }).success).toBe(false)
+  })
+
   it('accepts per-turn reasoning effort on start turn payloads', () => {
     const parsed = StartTurnRequest.parse({
       prompt: 'Compare the approaches',

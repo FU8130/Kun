@@ -68,6 +68,7 @@ import type { SkillRuntime } from '../skills/skill-runtime.js'
 import type { InstructionRuntime } from '../instructions/instruction-runtime.js'
 import type { AttachmentContent, AttachmentStore } from '../attachments/attachment-store.js'
 import { detectImage } from '../attachments/attachment-store.js'
+import { MAX_TURN_ATTACHMENT_BYTES, MAX_TURN_ATTACHMENT_IDS } from '../contracts/attachments.js'
 import type { ModelDocumentAttachment, ModelInputAttachment, ModelTextAttachmentFallback } from '../ports/model-client.js'
 import type { MemoryStore } from '../memory/memory-store.js'
 import type { ArtifactStore } from '../artifacts/artifact-store.js'
@@ -2928,6 +2929,12 @@ export class AgentLoop {
     modelCapabilities: ModelCapabilityMetadata
   }): Promise<{ imageAttachments: ModelInputAttachment[]; textFallbacks: ModelTextAttachmentFallback[]; documents: ModelDocumentAttachment[] }> {
     if (input.attachmentIds.length === 0) return { imageAttachments: [], textFallbacks: [], documents: [] }
+    if (input.attachmentIds.length > MAX_TURN_ATTACHMENT_IDS) {
+      throw new Error(`turn exceeds ${MAX_TURN_ATTACHMENT_IDS} attachment limit`)
+    }
+    if (new Set(input.attachmentIds).size !== input.attachmentIds.length) {
+      throw new Error('turn attachment ids must not contain duplicates')
+    }
     if (!this.opts.attachmentStore) {
       throw new Error('attachment store is unavailable')
     }
@@ -2937,11 +2944,16 @@ export class AgentLoop {
     const textFallbacks: ModelTextAttachmentFallback[] = []
     const documents: ModelDocumentAttachment[] = []
     let remainingDocumentChars = 400_000
+    let totalAttachmentBytes = 0
     for (const id of input.attachmentIds) {
       const attachment = await this.opts.attachmentStore.resolveContent(id, {
         threadId: input.threadId,
         workspace: input.workspace
       })
+      totalAttachmentBytes += attachment.data.byteLength
+      if (totalAttachmentBytes > MAX_TURN_ATTACHMENT_BYTES) {
+        throw new Error(`turn attachments exceed ${MAX_TURN_ATTACHMENT_BYTES} byte limit`)
+      }
       if (attachment.kind === 'document') {
         const fullText = attachment.documentText ?? ''
         const text = fullText.slice(0, Math.max(0, remainingDocumentChars))

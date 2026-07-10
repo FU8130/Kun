@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { TurnItem, UserFileReferenceSchema, UserMessageSource } from './items.js'
 import { isGuiPlanRelativePath } from '../shared/gui-plan.js'
 import { ApprovalPolicySchema, SandboxModeSchema } from './policy.js'
+import { MAX_TURN_ATTACHMENT_IDS } from './attachments.js'
 
 /**
  * Mode enum, inlined here (instead of importing `ThreadMode` from
@@ -158,7 +159,10 @@ export const StartTurnRequest = z.object({
       })
     )
     .optional(),
-  attachmentIds: z.array(z.string().min(1)).default([]),
+  attachmentIds: z.array(z.string().min(1)).max(MAX_TURN_ATTACHMENT_IDS).refine(
+    (ids) => new Set(ids).size === ids.length,
+    { message: 'attachmentIds must not contain duplicates' }
+  ).default([]),
   fileReferences: z.array(UserFileReferenceSchema).default([]),
   workspaceCheckpointId: z.string().min(1).optional(),
   /**
