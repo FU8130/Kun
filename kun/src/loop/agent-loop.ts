@@ -1,5 +1,5 @@
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import type { ModelClient, ModelRequest, ModelToolSpec } from '../ports/model-client.js'
 import type { AgentSdkRuntime } from '../runtime/agent-sdk/agent-sdk-runtime.js'
@@ -71,10 +71,7 @@ import type { ThreadGoal, ThreadRecord } from '../contracts/threads.js'
 import { modelCapabilitiesForModel, type ContextCompactionConfig } from './model-context-profile.js'
 import type { SkillRuntime } from '../skills/skill-runtime.js'
 import type { InstructionRuntime } from '../instructions/instruction-runtime.js'
-import type { AttachmentContent, AttachmentStore } from '../attachments/attachment-store.js'
-import { detectImage } from '../attachments/attachment-store.js'
-import { MAX_TURN_ATTACHMENT_BYTES, MAX_TURN_ATTACHMENT_IDS } from '../contracts/attachments.js'
-import type { ModelDocumentAttachment, ModelInputAttachment, ModelTextAttachmentFallback } from '../ports/model-client.js'
+import type { AttachmentStore } from '../attachments/attachment-store.js'
 import type { MemoryStore } from '../memory/memory-store.js'
 import type { ArtifactStore } from '../artifacts/artifact-store.js'
 import {
@@ -91,8 +88,7 @@ import { applyRequestHistoryHygiene } from './request-history-hygiene.js'
 import {
   capToolResultImages,
   rehydrateGeneratedImagesForForward,
-  MAX_FORWARDED_GENERATED_IMAGES,
-  type ToolResultImage
+  MAX_FORWARDED_GENERATED_IMAGES
 } from './tool-result-image.js'
 import { estimateModelRequestInputTokens, estimateRequestOverheadTokens } from './model-request-estimator.js'
 import {
@@ -115,6 +111,11 @@ import {
   svgArtifactCompletionState,
   type SvgArtifactCompletionState
 } from './svg-artifact-completion.js'
+import {
+  TurnAttachmentService,
+  attachmentRequestPipelineDetails,
+  imageGenerationReferenceInstructions
+} from './turn-attachment-service.js'
 import { createToolExecutionContext } from './tool-context-factory.js'
 import { ToolExecutionService } from './tool-execution-service.js'
 import { ToolCallDispatcher } from './tool-call-dispatcher.js'
@@ -358,6 +359,7 @@ export class AgentLoop {
   private readonly toolStormBreakers = new Map<string, ToolStormBreaker>()
   private readonly telemetry: LoopTelemetry
   private readonly modelRoundEngine: ModelRoundEngine
+  private readonly turnAttachments: TurnAttachmentService
   private readonly turnContextResolver: TurnContextResolver
   private readonly interactiveToolBridge: InteractiveToolBridge
   private readonly toolExecution: ToolExecutionService
@@ -383,6 +385,7 @@ export class AgentLoop {
   constructor(opts: AgentLoopOptions) {
     this.opts = opts
     this.telemetry = new LoopTelemetry(opts.sessionStore)
+    this.turnAttachments = new TurnAttachmentService(opts.attachmentStore)
     this.modelRoundEngine = new ModelRoundEngine({
       model: opts.model,
       events: opts.events,
@@ -416,7 +419,7 @@ export class AgentLoop {
     this.toolCallDispatcher = new ToolCallDispatcher(this.toolExecution)
     this.turnContextResolver = new TurnContextResolver({
       toolHost: opts.toolHost,
-      resolveAttachments: (input) => this.resolveAttachments(input),
+      resolveAttachments: (input) => this.turnAttachments.resolveTurnAttachments(input),
       ...(opts.skillRuntime ? { skillRuntime: opts.skillRuntime } : {}),
       ...(opts.instructionRuntime ? { instructionRuntime: opts.instructionRuntime } : {}),
       ...(opts.memoryStore ? { memoryStore: opts.memoryStore } : {}),
@@ -1286,7 +1289,7 @@ export class AgentLoop {
     // (only this transient request copy carries it).
     const forwardHistory = await rehydrateGeneratedImagesForForward(
       history,
-      (output) => this.resolveGeneratedImageForForward(output, threadId, thread?.workspace),
+      (output) => this.turnAttachments.resolveGeneratedImageForForward(output, threadId, thread?.workspace),
       MAX_FORWARDED_GENERATED_IMAGES
     )
     const runtimeContextInstruction = shouldInjectInitialRuntimeContext({
@@ -2191,130 +2194,6 @@ export class AgentLoop {
     }
   }
 
-  private async resolveAttachments(input: {
-    attachmentIds: readonly string[]
-    threadId: string
-    workspace: string
-    modelCapabilities: ModelCapabilityMetadata
-  }): Promise<{ imageAttachments: ModelInputAttachment[]; textFallbacks: ModelTextAttachmentFallback[]; documents: ModelDocumentAttachment[] }> {
-    if (input.attachmentIds.length === 0) return { imageAttachments: [], textFallbacks: [], documents: [] }
-    if (input.attachmentIds.length > MAX_TURN_ATTACHMENT_IDS) {
-      throw new Error(`turn exceeds ${MAX_TURN_ATTACHMENT_IDS} attachment limit`)
-    }
-    if (new Set(input.attachmentIds).size !== input.attachmentIds.length) {
-      throw new Error('turn attachment ids must not contain duplicates')
-    }
-    if (!this.opts.attachmentStore) {
-      throw new Error('attachment store is unavailable')
-    }
-    const supportsImageInput = input.modelCapabilities.inputModalities.includes('image')
-    const textFallbackPolicy = this.opts.attachmentStore.textFallbackPolicy()
-    const imageAttachments: ModelInputAttachment[] = []
-    const textFallbacks: ModelTextAttachmentFallback[] = []
-    const documents: ModelDocumentAttachment[] = []
-    let remainingDocumentChars = 400_000
-    let totalAttachmentBytes = 0
-    for (const id of input.attachmentIds) {
-      const attachment = await this.opts.attachmentStore.resolveContent(id, {
-        threadId: input.threadId,
-        workspace: input.workspace
-      })
-      totalAttachmentBytes += attachment.data.byteLength
-      if (totalAttachmentBytes > MAX_TURN_ATTACHMENT_BYTES) {
-        throw new Error(`turn attachments exceed ${MAX_TURN_ATTACHMENT_BYTES} byte limit`)
-      }
-      if (attachment.kind === 'document') {
-        const fullText = attachment.documentText ?? ''
-        const text = fullText.slice(0, Math.max(0, remainingDocumentChars))
-        remainingDocumentChars -= text.length
-        documents.push({
-          id: attachment.id,
-          name: attachment.name,
-          mimeType: attachment.mimeType,
-          text,
-          byteSize: attachment.byteSize,
-          ...(attachment.pageCount ? { pageCount: attachment.pageCount } : {}),
-          ...(attachment.truncated || text.length < fullText.length ? { truncated: true } : {}),
-          ...(attachment.localFilePath ? { localFilePath: attachment.localFilePath } : {})
-        })
-        if (remainingDocumentChars <= 0) break
-        continue
-      }
-      if (supportsImageInput) {
-        imageAttachments.push({
-          id: attachment.id,
-          name: attachment.name,
-          mimeType: attachment.mimeType,
-          dataBase64: attachment.data.toString('base64'),
-          ...(attachment.width ? { width: attachment.width } : {}),
-          ...(attachment.height ? { height: attachment.height } : {}),
-          ...(attachment.localFilePath ? { localFilePath: attachment.localFilePath } : {})
-        })
-        continue
-      }
-      textFallbacks.push(buildTextAttachmentFallback(
-        attachment,
-        textFallbackPolicy.textFallbackMaxBase64Bytes
-      ))
-    }
-    return { imageAttachments, textFallbacks, documents }
-  }
-
-  /**
-   * Resolve the bytes of a generate_image result for transient model forwarding:
-   * prefer the attachment the tool already created (authorized for this thread),
-   * fall back to reading the saved file. Returns null (no image forwarded) on any
-   * miss so a scope/auth error degrades gracefully rather than throwing.
-   */
-  private async resolveGeneratedImageForForward(
-    output: Record<string, unknown>,
-    threadId: string,
-    workspace: string | undefined
-  ): Promise<ToolResultImage | null> {
-    const fromBytes = (data: Buffer, fallbackMime?: string): ToolResultImage => {
-      const detected = detectImage(data)
-      return {
-        mimeType: detected?.mimeType ?? fallbackMime ?? 'image/png',
-        dataBase64: data.toString('base64'),
-        ...(detected?.width !== undefined ? { width: detected.width } : {}),
-        ...(detected?.height !== undefined ? { height: detected.height } : {})
-      }
-    }
-    const attachments = Array.isArray(output.attachments) ? output.attachments : []
-    const firstAttachment = attachments[0]
-    const attachmentId =
-      firstAttachment && typeof firstAttachment === 'object' &&
-      typeof (firstAttachment as { id?: unknown }).id === 'string'
-        ? (firstAttachment as { id: string }).id
-        : ''
-    if (attachmentId && this.opts.attachmentStore) {
-      try {
-        const content = await this.opts.attachmentStore.resolveContent(attachmentId, {
-          threadId,
-          ...(workspace ? { workspace } : {})
-        })
-        return fromBytes(content.data, content.mimeType)
-      } catch {
-        // fall through to reading the file on disk
-      }
-    }
-    const files = Array.isArray(output.files) ? output.files : []
-    const firstFile = files[0]
-    const absolutePath =
-      firstFile && typeof firstFile === 'object' &&
-      typeof (firstFile as { absolutePath?: unknown }).absolutePath === 'string'
-        ? (firstFile as { absolutePath: string }).absolutePath
-        : ''
-    if (absolutePath) {
-      try {
-        return fromBytes(await readFile(absolutePath))
-      } catch {
-        // no-op
-      }
-    }
-    return null
-  }
-
   /** Convenience factory for tests: builds a loop with sensible defaults. */
   static defaultPrefix(): ImmutablePrefix {
     return createImmutablePrefix({
@@ -2322,125 +2201,6 @@ export class AgentLoop {
       pinnedConstraints: ['user: preserve recent turns', 'project: keep responses concise']
     })
   }
-}
-
-function buildTextAttachmentFallback(
-  attachment: AttachmentContent,
-  maxBase64Bytes: number
-): ModelTextAttachmentFallback {
-  const fallback = attachment.textFallback
-  if (fallback) {
-    const fallbackBase64Bytes = Buffer.byteLength(fallback.dataBase64, 'utf8')
-    if (fallbackBase64Bytes > maxBase64Bytes) {
-      throw new Error(`attachment ${attachment.id} text fallback exceeds ${maxBase64Bytes} base64 byte limit`)
-    }
-    return {
-      id: attachment.id,
-      name: attachment.name,
-      mimeType: fallback.mimeType,
-      dataBase64: fallback.dataBase64,
-      byteSize: fallback.byteSize,
-      ...(fallback.width ? { width: fallback.width } : {}),
-      ...(fallback.height ? { height: fallback.height } : {}),
-      ...(attachment.localFilePath ? { localFilePath: attachment.localFilePath } : {}),
-      ...(fallback.wasCompressed !== undefined ? { wasCompressed: fallback.wasCompressed } : {})
-    }
-  }
-
-  const originalBase64 = attachment.data.toString('base64')
-  if (Buffer.byteLength(originalBase64, 'utf8') > maxBase64Bytes) {
-    throw new Error(
-      `attachment ${attachment.id} is missing a compressed text fallback and original base64 exceeds ${maxBase64Bytes} byte limit`
-    )
-  }
-  return {
-    id: attachment.id,
-    name: attachment.name,
-    mimeType: attachment.mimeType,
-    dataBase64: originalBase64,
-    byteSize: attachment.byteSize,
-    ...(attachment.width ? { width: attachment.width } : {}),
-    ...(attachment.height ? { height: attachment.height } : {}),
-    ...(attachment.localFilePath ? { localFilePath: attachment.localFilePath } : {}),
-    wasCompressed: false
-  }
-}
-
-function attachmentRequestPipelineDetails(input: {
-  attachmentIds: readonly string[]
-  imageAttachments: readonly ModelInputAttachment[]
-  textFallbacks: readonly ModelTextAttachmentFallback[]
-  documents?: readonly ModelDocumentAttachment[]
-  modelCapabilities: ModelCapabilityMetadata
-}): Record<string, unknown> {
-  const documents = input.documents ?? []
-  if (
-    input.attachmentIds.length === 0 &&
-    input.imageAttachments.length === 0 &&
-    input.textFallbacks.length === 0 &&
-    documents.length === 0
-  ) {
-    return {}
-  }
-  return {
-    attachmentIds: [...input.attachmentIds],
-    modelInputModalities: [...input.modelCapabilities.inputModalities],
-    modelMessageParts: [...input.modelCapabilities.messageParts],
-    imageAttachmentCount: input.imageAttachments.length,
-    imageAttachmentBase64Bytes: input.imageAttachments.reduce(
-      (total, attachment) => total + Buffer.byteLength(attachment.dataBase64, 'base64'),
-      0
-    ),
-    imageAttachmentMimeTypes: [...new Set(input.imageAttachments.map((attachment) => attachment.mimeType))],
-    textFallbackCount: input.textFallbacks.length,
-    textFallbackBase64Bytes: input.textFallbacks.reduce(
-      (total, attachment) => total + Buffer.byteLength(attachment.dataBase64, 'utf8'),
-      0
-    ),
-    textFallbackMimeTypes: [...new Set(input.textFallbacks.map((attachment) => attachment.mimeType))],
-    documentCount: documents.length,
-    documentTextChars: documents.reduce((total, document) => total + document.text.length, 0),
-    documentMimeTypes: [...new Set(documents.map((document) => document.mimeType))]
-  }
-}
-
-function imageGenerationReferenceInstructions(input: {
-  imageAttachments: readonly ModelInputAttachment[]
-  textFallbacks: readonly ModelTextAttachmentFallback[]
-  workspace: string
-  tools: readonly Pick<ModelToolSpec, 'name'>[]
-}): string[] {
-  if (!input.tools.some((tool) => tool.name === 'generate_image')) return []
-
-  const references = [...input.imageAttachments, ...input.textFallbacks]
-    .filter((attachment) => attachment.mimeType.startsWith('image/'))
-    .map((attachment) => ({
-      name: attachment.name,
-      path: workspaceRelativeAttachmentPath(attachment.localFilePath, input.workspace)
-    }))
-    .filter((attachment): attachment is { name: string; path: string } => Boolean(attachment.path))
-
-  if (references.length === 0) return []
-  return [[
-    'Image-to-image reference images are available for this turn:',
-    ...references.map((reference) => `- ${reference.name}: ${reference.path}`),
-    'For image edits, restyles, redraws, or transformations, call `generate_image` with the matching workspace-relative path(s) in `reference_image_paths`.'
-  ].join('\n')]
-}
-
-function workspaceRelativeAttachmentPath(
-  localFilePath: string | undefined,
-  workspace: string
-): string | null {
-  const workspaceRoot = workspace.trim()
-  const rawPath = localFilePath?.trim()
-  if (!workspaceRoot || !rawPath) return null
-
-  const workspaceAbsolute = resolve(workspaceRoot)
-  const fileAbsolute = isAbsolute(rawPath) ? resolve(rawPath) : resolve(workspaceAbsolute, rawPath)
-  const relativePath = relative(workspaceAbsolute, fileAbsolute)
-  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) return null
-  return relativePath.replace(/\\/g, '/')
 }
 
 function buildToolCatalogDriftMessage(toolCatalog: {
