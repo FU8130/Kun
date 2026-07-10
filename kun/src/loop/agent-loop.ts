@@ -38,10 +38,8 @@ import {
 } from './design-mode.js'
 import {
   effectiveHistoryAfterLatestCompaction,
-  insertCompactionIntoVisibleHistory,
   placeCompactionsAtTurnEnd
 } from './compaction-history.js'
-import { resolveCompactionModel, summarizeCompactionWithModel } from './compaction-summary.js'
 import { generateThreadTitle, resolveRoleModel } from './title-generator.js'
 import type { RolesConfig } from '../config/kun-config.js'
 import { InflightTracker } from './inflight-tracker.js'
@@ -74,11 +72,7 @@ import type { InstructionRuntime } from '../instructions/instruction-runtime.js'
 import type { AttachmentStore } from '../attachments/attachment-store.js'
 import type { MemoryStore } from '../memory/memory-store.js'
 import type { ArtifactStore } from '../artifacts/artifact-store.js'
-import {
-  hasHooksForPhase,
-  runObserverHooks,
-  type ResolvedHook
-} from '../hooks/hook-engine.js'
+import type { ResolvedHook } from '../hooks/hook-engine.js'
 import {
   applyTokenEconomyToRequest,
   normalizeTokenEconomyConfig,
@@ -90,8 +84,9 @@ import {
   rehydrateGeneratedImagesForForward,
   MAX_FORWARDED_GENERATED_IMAGES
 } from './tool-result-image.js'
-import { estimateModelRequestInputTokens, estimateRequestOverheadTokens } from './model-request-estimator.js'
+import { estimateModelRequestInputTokens } from './model-request-estimator.js'
 import { ModelRoutingService } from './model-routing-service.js'
+import { HistoryCompactionService } from './history-compaction-service.js'
 import { ToolStormBreaker, type ToolStormBreakerOptions } from './tool-storm-breaker.js'
 import { healLoadedHistoryItems } from './history-healing.js'
 import { LoopTelemetry } from './loop-telemetry.js'
@@ -139,7 +134,6 @@ import {
   verificationSuggestionInstruction
 } from './plan-mode.js'
 import {
-  recordLifecycleHookWarnings,
   runTurnEndLifecycleHooks,
   runTurnStartLifecycleHooks,
   type TurnLifecycleHookDeps
@@ -354,6 +348,7 @@ export class AgentLoop {
   private readonly modelRouting: ModelRoutingService
   private readonly toolStormBreakers = new Map<string, ToolStormBreaker>()
   private readonly telemetry: LoopTelemetry
+  private readonly historyCompaction: HistoryCompactionService
   private readonly modelRoundEngine: ModelRoundEngine
   private readonly turnAttachments: TurnAttachmentService
   private readonly turnContextResolver: TurnContextResolver
@@ -381,6 +376,20 @@ export class AgentLoop {
   constructor(opts: AgentLoopOptions) {
     this.opts = opts
     this.telemetry = new LoopTelemetry(opts.sessionStore)
+    this.historyCompaction = new HistoryCompactionService({
+      sessionStore: opts.sessionStore,
+      compactor: opts.compactor,
+      prefix: opts.prefix,
+      model: opts.model,
+      usage: opts.usage,
+      events: opts.events,
+      ids: opts.ids,
+      telemetry: this.telemetry,
+      getContextCompaction: () => opts.contextCompaction,
+      getHooks: () => opts.hooks,
+      clearReadTracker: (threadId?: string) => opts.toolHost.clearReadTracker?.(threadId),
+      rewriteThreadItemsFromSession: (threadId) => this.rewriteThreadItemsFromSession(threadId)
+    })
     this.turnAttachments = new TurnAttachmentService(opts.attachmentStore)
     this.modelRouting = new ModelRoutingService(opts.model)
     this.modelRoundEngine = new ModelRoundEngine({
@@ -1271,7 +1280,10 @@ export class AgentLoop {
       createPlanSatisfied,
       stepIndex
     })
-    const history = await this.compactIfNeeded(items, model, signal, {
+    const history = await this.historyCompaction.compactIfNeeded({
+      items,
+      model,
+      signal,
       threadId,
       turnId,
       toolSpecs: effectiveToolSpecs
@@ -1770,194 +1782,6 @@ export class AgentLoop {
         }
       }
     })
-  }
-
-  private async compactIfNeeded(
-    items: TurnItem[],
-    model: string,
-    signal: AbortSignal,
-    context: {
-      threadId: string
-      turnId: string
-      toolSpecs?: readonly ModelToolSpec[]
-    }
-  ): Promise<TurnItem[]> {
-    // Restore the accurate provider token count after a process restart,
-    // when the in-memory pressure map is empty. Without this the next
-    // line falls back to the item-only estimator, which under-counts and
-    // can silently skip compaction until the context overruns the window.
-    await this.telemetry.hydratePromptPressureIfCold(context.threadId, model)
-    const pressure = this.telemetry.consumePromptPressure(context.threadId, model)
-    const thresholdModel = pressure?.model || model
-    const overheadTokens = estimateRequestOverheadTokens({
-      systemPrompt: this.opts.prefix.systemPrompt,
-      prefix: this.opts.prefix.fewShots,
-      tools: context.toolSpecs
-    })
-    const plan = this.opts.compactor.planCompaction(items, {
-      model: thresholdModel,
-      promptTokens: pressure?.promptTokens,
-      overheadTokens
-    })
-    if (!plan) return items
-    const threadId = context.threadId
-    const turnId = context.turnId
-    if (hasHooksForPhase(this.opts.hooks, 'PreCompact')) {
-      const observed = await runObserverHooks(this.opts.hooks, {
-        phase: 'PreCompact',
-        threadId,
-        turnId,
-        reason: String(plan.reason),
-        mode: String(plan.mode)
-      })
-      await recordLifecycleHookWarnings(this.opts.events, { threadId, turnId }, observed.warnings)
-    }
-    const summaryItemId = this.opts.ids.next('compaction')
-    const committed = await rewriteItemHistoryWithRetry<{
-      history: TurnItem[]
-      result: ReturnType<ContextCompactor['compact']> | null
-    }>({
-      sessionStore: this.opts.sessionStore,
-      threadId,
-      maxAttempts: 2,
-      build: async (snapshot, attempt) => {
-        const currentItems = repairModelHistoryItems(
-          effectiveHistoryAfterLatestCompaction(snapshot.items)
-        )
-        const currentPlan = attempt === 1
-          ? plan
-          : this.opts.compactor.planCompaction(currentItems, {
-              model: thresholdModel,
-              overheadTokens
-            })
-        if (!currentPlan) {
-          return {
-            changed: false,
-            items: snapshot.items,
-            value: { history: currentItems, result: null }
-          }
-        }
-        let result = this.opts.compactor.compact({
-          threadId,
-          turnId,
-          history: currentItems,
-          prefix: this.opts.prefix,
-          reason: currentPlan.reason,
-          mode: currentPlan.mode,
-          keepRecent: currentPlan.keepRecent,
-          summaryItemId
-        })
-        if (result.replacedTokens === 0) {
-          return {
-            changed: false,
-            items: snapshot.items,
-            value: { history: currentItems, result: null }
-          }
-        }
-        // A model summary generated for a stale snapshot must not be applied
-        // to newer history. On retry the deterministic heuristic is used
-        // instead of issuing a duplicate summarizer request.
-        if (attempt === 1 && this.opts.contextCompaction?.summaryMode === 'model') {
-          const compactionModel = resolveCompactionModel({
-            contextCompaction: this.opts.contextCompaction,
-            fallbackModel: model
-          })
-          const modelSummary = await summarizeCompactionWithModel({
-            threadId,
-            turnId,
-            model: compactionModel.model,
-            ...(compactionModel.providerId ? { providerId: compactionModel.providerId } : {}),
-            modelClient: this.opts.model,
-            prefix: this.opts.prefix,
-            contextCompaction: this.opts.contextCompaction,
-            items: currentItems,
-            heuristicSummary: result.summaryItem.kind === 'compaction' ? result.summaryItem.summary : '',
-            signal,
-            recordUsage: async (usageSnapshot) => {
-              const usage = this.opts.usage.record(threadId, usageSnapshot)
-              await this.opts.events.record({
-                kind: 'usage',
-                threadId,
-                turnId,
-                model: compactionModel.model,
-                usage
-              })
-            },
-            recordFallback: async (message) => {
-              await this.opts.events.record({
-                kind: 'error',
-                threadId,
-                turnId,
-                message,
-                code: 'compaction_summary_fallback',
-                severity: 'warning'
-              })
-            }
-          })
-          if (signal.aborted) {
-            return {
-              changed: false,
-              items: snapshot.items,
-              value: { history: currentItems, result: null }
-            }
-          }
-          if (modelSummary) {
-            result = this.opts.compactor.compact({
-              threadId,
-              turnId,
-              history: currentItems,
-              prefix: this.opts.prefix,
-              reason: currentPlan.reason,
-              mode: currentPlan.mode,
-              keepRecent: currentPlan.keepRecent,
-              summaryOverride: modelSummary,
-              summaryItemId
-            })
-          }
-        }
-        return {
-          changed: true,
-          items: insertCompactionIntoVisibleHistory({
-            visibleItems: snapshot.items,
-            compactedItems: result.next,
-            summaryItem: result.summaryItem
-          }),
-          value: { history: result.next, result }
-        }
-      }
-    })
-    if (committed.status === 'applied') {
-      const result = committed.value.result
-      if (result) {
-        this.opts.toolHost.clearReadTracker?.(threadId)
-        await this.rewriteThreadItemsFromSession(threadId)
-        await this.opts.events.record({
-          kind: 'compaction_completed',
-          threadId,
-          turnId,
-          itemId: result.summaryItem.id,
-          summary: result.summaryItem.kind === 'compaction' ? result.summaryItem.summary : '',
-          replacedTokens: result.replacedTokens,
-          pinnedConstraints: this.opts.prefix.pinnedConstraints,
-          ...(result.summaryItem.kind === 'compaction' && result.summaryItem.sourceDigest
-            ? { sourceDigest: result.summaryItem.sourceDigest }
-            : {}),
-          ...(result.summaryItem.kind === 'compaction' && result.summaryItem.digestMarker
-            ? { digestMarker: result.summaryItem.digestMarker }
-            : {}),
-          ...(result.summaryItem.kind === 'compaction' && result.summaryItem.sourceItemIds
-            ? { sourceItemIds: result.summaryItem.sourceItemIds }
-            : {})
-        })
-      }
-      return committed.value.history
-    }
-    if (committed.status === 'unchanged') return committed.value.history
-    // Do not fall back to the stale `items` argument after a lost CAS race.
-    // The next loop step can retry compaction from this current safe history.
-    return repairModelHistoryItems(
-      effectiveHistoryAfterLatestCompaction(await this.opts.sessionStore.loadItems(threadId))
-    )
   }
 
   private async rewriteThreadItemsFromSession(threadId: string): Promise<void> {
