@@ -31,6 +31,7 @@ import { touchThread } from '../domain/thread.js'
 import type { RuntimeEventRecorder } from './runtime-event-recorder.js'
 import type { UsageService } from './usage-service.js'
 import { createImmutablePrefix } from '../cache/immutable-prefix.js'
+import { rewriteItemHistoryWithRetry } from './history-commit-coordinator.js'
 import { withThreadStoreMutation } from './thread-mutation-coordinator.js'
 import type { ThreadLifecycleFence } from './thread-lifecycle-fence.js'
 
@@ -224,9 +225,25 @@ export class TurnService {
 
       const keptTurns = thread.turns.slice(0, targetIndex)
       const keptTurnIds = new Set(keptTurns.map((turn) => turn.id))
-      const items = await this.deps.sessionStore.loadItems(input.threadId)
-      const keptItems = items.filter((item) => keptTurnIds.has(item.turnId))
-      await this.deps.sessionStore.rewriteItems(input.threadId, keptItems)
+      const history = await rewriteItemHistoryWithRetry({
+        sessionStore: this.deps.sessionStore,
+        threadId: input.threadId,
+        maxAttempts: 3,
+        build: (snapshot) => {
+          const keptItems = snapshot.items.filter((item) => keptTurnIds.has(item.turnId))
+          return {
+            changed: keptItems.length !== snapshot.items.length,
+            items: keptItems,
+            value: undefined
+          }
+        }
+      })
+      if (history.status === 'closed') {
+        throw new TurnConflictError(`thread is being deleted: ${input.threadId}`)
+      }
+      if (history.status === 'conflict') {
+        throw new TurnConflictError(`history changed while rewinding: ${input.threadId}`)
+      }
       const now = this.deps.nowIso()
       await this.deps.threadStore.upsert({
         ...touchThread(thread, now),
@@ -438,7 +455,7 @@ export class TurnService {
         summaryItem: result.summaryItem
       })
       await this.deps.sessionStore.rewriteItems(input.threadId, visibleItems)
-      await this.rewriteThreadItemsFromSession(input.threadId, visibleItems)
+      await this.rewriteThreadItemsFromSession(input.threadId)
       await this.deps.events.record({
         kind: 'compaction_completed',
         threadId: input.threadId,
@@ -775,11 +792,22 @@ export class TurnService {
   }
 
   private async discardTurnItems(threadId: string, turnId: string): Promise<void> {
-    const items = await this.deps.sessionStore.loadItems(threadId)
-    await this.deps.sessionStore.rewriteItems(
+    const history = await rewriteItemHistoryWithRetry({
+      sessionStore: this.deps.sessionStore,
       threadId,
-      items.filter((item) => item.turnId !== turnId || item.kind === 'user_message')
-    )
+      maxAttempts: 3,
+      build: (snapshot) => {
+        const items = snapshot.items.filter((item) => item.turnId !== turnId || item.kind === 'user_message')
+        return {
+          changed: items.length !== snapshot.items.length,
+          items,
+          value: undefined
+        }
+      }
+    })
+    if (history.status === 'applied' || history.status === 'unchanged') {
+      await this.rewriteThreadItemsFromSession(threadId)
+    }
   }
 
   private async finalizePersistedOpenItems(
@@ -801,7 +829,8 @@ export class TurnService {
     return items.filter((item) => item.kind === 'user_message')
   }
 
-  private async rewriteThreadItemsFromSession(threadId: string, items: TurnItem[]): Promise<void> {
+  private async rewriteThreadItemsFromSession(threadId: string): Promise<void> {
+    const items = await this.deps.sessionStore.loadItems(threadId)
     if (items.length === 0) return
     const itemsByTurn = new Map<string, TurnItem[]>()
     for (const item of items) {

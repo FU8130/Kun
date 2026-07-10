@@ -21,6 +21,7 @@ import type { UserInputGate, UserInputQuestion, UserInputResolution } from '../p
 import type { UsageService } from '../services/usage-service.js'
 import { TurnCapacityError, type TurnService } from '../services/turn-service.js'
 import type { RuntimeEventRecorder } from '../services/runtime-event-recorder.js'
+import { rewriteItemHistoryWithRetry } from '../services/history-commit-coordinator.js'
 import { withThreadStoreMutation } from '../services/thread-mutation-coordinator.js'
 import type { PipelineStage } from '../contracts/events.js'
 import type { RuntimeErrorSeverity } from '../contracts/errors.js'
@@ -1215,11 +1216,27 @@ export class AgentLoop {
     // change detection costs two full-history stringifies per call.
     let historyItems: TurnItem[] = loadedItems
     if (stepIndex === 0) {
-      const healed = healLoadedHistoryItems(loadedItems)
-      if (healed.changed) {
-        await this.opts.sessionStore.rewriteItems(threadId, healed.items)
+      const healing = await rewriteItemHistoryWithRetry({
+        sessionStore: this.opts.sessionStore,
+        threadId,
+        maxAttempts: 2,
+        build: (snapshot) => {
+          const healed = healLoadedHistoryItems(snapshot.items)
+          return { changed: healed.changed, items: healed.items, value: undefined }
+        }
+      })
+      if (healing.status === 'applied') {
+        await this.rewriteThreadItemsFromSession(threadId)
+        historyItems = healing.items
+      } else if (healing.status === 'unchanged') {
+        historyItems = healing.items
+      } else {
+        // A later step will retry persistence. Use a locally healed view now
+        // rather than letting one malformed legacy record poison this request.
+        historyItems = healLoadedHistoryItems(
+          await this.opts.sessionStore.loadItems(threadId)
+        ).items
       }
-      historyItems = healed.items
     }
     await this.recordPipelineStage(
       threadId,
@@ -2752,7 +2769,7 @@ export class AgentLoop {
       })
       this.opts.toolHost.clearReadTracker?.(threadId)
       await this.opts.sessionStore.rewriteItems(threadId, visibleItems)
-      await this.rewriteThreadItemsFromSession(threadId, visibleItems)
+      await this.rewriteThreadItemsFromSession(threadId)
       await this.opts.events.record({
         kind: 'compaction_completed',
         threadId,
@@ -2775,7 +2792,8 @@ export class AgentLoop {
     return result.next
   }
 
-  private async rewriteThreadItemsFromSession(threadId: string, items: TurnItem[]): Promise<void> {
+  private async rewriteThreadItemsFromSession(threadId: string): Promise<void> {
+    const items = await this.opts.sessionStore.loadItems(threadId)
     if (items.length === 0) return
     const itemsByTurn = new Map<string, TurnItem[]>()
     for (const item of items) {
