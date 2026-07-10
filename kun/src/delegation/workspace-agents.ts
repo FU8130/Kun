@@ -1,5 +1,6 @@
-import { readdir, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { constants, type Dirent } from 'node:fs'
+import { open, readdir, realpath, type FileHandle } from 'node:fs/promises'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { SubagentProfileConfig, type SubagentMode, type SubagentToolPolicy } from '../contracts/capabilities.js'
 
 /**
@@ -34,25 +35,42 @@ export type WorkspaceAgentProfile = {
 }
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
+const MAX_WORKSPACE_AGENT_FILES = 32
+const MAX_WORKSPACE_AGENT_FILE_BYTES = 64 * 1024
 
 export async function loadWorkspaceAgentProfiles(workspace: string): Promise<WorkspaceAgentProfile[]> {
   if (!workspace) return []
-  const dir = join(workspace, '.kun', 'agents')
-  let entries: string[]
+  const workspaceRoot = resolve(workspace)
+  const dir = join(workspaceRoot, '.kun', 'agents')
+  let resolvedWorkspace: string
+  let resolvedDir: string
   try {
-    entries = await readdir(dir)
+    [resolvedWorkspace, resolvedDir] = await Promise.all([realpath(workspaceRoot), realpath(dir)])
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    if ((error as NodeJS.ErrnoException).code === 'ENOTDIR') return []
+    throw error
+  }
+  if (!isPathInside(resolvedWorkspace, resolvedDir)) return []
+
+  let entries: Dirent<string>[]
+  try {
+    entries = await readdir(resolvedDir, { withFileTypes: true })
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     if ((error as NodeJS.ErrnoException).code === 'ENOTDIR') return []
     throw error
   }
   const results: WorkspaceAgentProfile[] = []
-  for (const entry of entries) {
-    if (!entry.endsWith('.md')) continue
-    const filePath = join(dir, entry)
+  for (const entry of entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .slice(0, MAX_WORKSPACE_AGENT_FILES)) {
+    const filePath = join(resolvedDir, entry.name)
     try {
-      const text = await readFile(filePath, 'utf8')
-      const parsed = parseAgentMarkdown(text, entry.replace(/\.md$/i, ''))
+      const text = await readWorkspaceAgentFile(filePath)
+      if (text === null) continue
+      const parsed = parseAgentMarkdown(text, entry.name.replace(/\.md$/i, ''))
       if (parsed) results.push({ ...parsed, filePath, source: 'workspace' })
     } catch {
       // Skip unreadable / malformed files; do not bubble — overlay should
@@ -60,6 +78,40 @@ export async function loadWorkspaceAgentProfiles(workspace: string): Promise<Wor
     }
   }
   return results
+}
+
+async function readWorkspaceAgentFile(path: string): Promise<string | null> {
+  let handle: FileHandle | undefined
+  try {
+    handle = await open(
+      path,
+      process.platform === 'win32'
+        ? constants.O_RDONLY
+        : constants.O_RDONLY | constants.O_NOFOLLOW
+    )
+    const fileStat = await handle.stat()
+    if (!fileStat.isFile() || fileStat.size > MAX_WORKSPACE_AGENT_FILE_BYTES) return null
+    const buffer = Buffer.allocUnsafe(MAX_WORKSPACE_AGENT_FILE_BYTES + 1)
+    let offset = 0
+    while (offset < buffer.byteLength) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.byteLength - offset, offset)
+      if (bytesRead === 0) break
+      offset += bytesRead
+    }
+    // A growing file cannot bypass the stat precheck and turn an overlay scan
+    // into an unbounded read. Do not parse truncated configuration.
+    if (offset > MAX_WORKSPACE_AGENT_FILE_BYTES) return null
+    return buffer.subarray(0, offset).toString('utf8')
+  } catch {
+    return null
+  } finally {
+    if (handle) await handle.close().catch(() => undefined)
+  }
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate)
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
 }
 
 function parseAgentMarkdown(text: string, defaultId: string): { id: string; profile: SubagentProfileConfig } | null {
@@ -124,7 +176,10 @@ function parseListField(fields: Record<string, string>, key: string): string[] |
   if (!raw) return undefined
   // Support both inline `[a, b, c]` and comma-separated `a, b, c`.
   const stripped = raw.replace(/^\[/, '').replace(/\]$/, '')
-  const items = stripped.split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean)
+  const items = stripped.split(',')
+    .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+    .filter(Boolean)
+    .slice(0, 32)
   return items.length ? items : undefined
 }
 

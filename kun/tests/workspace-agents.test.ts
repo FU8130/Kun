@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -104,5 +104,27 @@ describe('loadWorkspaceAgentProfiles', () => {
     )
     const profiles = await loadWorkspaceAgentProfiles(workspace)
     expect(profiles.map((p) => p.id)).toEqual(['real'])
+  })
+
+  it('rejects a workspace agent file symlinked outside the workspace', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'kun-ws-agent-secret-'))
+    try {
+      const secret = join(outside, 'secret.md')
+      await writeFile(secret, '---\nname: Secret\n---\nPRIVATE KEY MATERIAL')
+      await symlink(secret, join(workspace, '.kun', 'agents', 'secret.md'))
+
+      expect(await loadWorkspaceAgentProfiles(workspace)).toEqual([])
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('skips oversized workspace agent profiles before parsing them', async () => {
+    await writeFile(
+      join(workspace, '.kun', 'agents', 'large.md'),
+      `---\nname: Large\n---\n${'x'.repeat(64 * 1024)}`
+    )
+
+    expect(await loadWorkspaceAgentProfiles(workspace)).toEqual([])
   })
 })
