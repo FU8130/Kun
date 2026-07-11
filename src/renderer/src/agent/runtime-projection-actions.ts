@@ -31,6 +31,7 @@ export type RuntimeProjectionAction =
   | { type: 'compaction_updated'; payload: CompactionEventPayload }
   | { type: 'review_updated'; payload: ReviewEventPayload }
   | { type: 'approval_requested'; event: CoreRuntimeEventJson }
+  | { type: 'approval_received'; payload: Parameters<ThreadEventSink['onApproval']>[0] }
   | { type: 'user_input_requested'; payload: UserInputRequestPayload }
   | { type: 'user_input_status_changed'; payload: UserInputStatusPayload }
   | { type: 'runtime_status_received'; payload: RuntimeStatusEventPayload }

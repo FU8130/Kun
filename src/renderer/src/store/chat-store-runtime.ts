@@ -43,6 +43,7 @@ import { readThreadWorktreeRegistry, saveThreadWorktreeRegistry, forgetThreadWor
 import { notifySddChatTranscriptMirror } from '../sdd/sdd-chat-transcript'
 import { notifyDesignChatTranscriptMirror } from '../design/design-chat-transcript'
 import { useWriteWorkspaceStore } from '../write/write-workspace-store'
+import { reduceChatProjection } from './chat-projection-reducer'
 import {
   armBusyWatchdog as armBusyWatchdogImpl,
   clearBusyWatchdog,
@@ -799,6 +800,15 @@ export function buildThreadEventSink(
     if (binding.signal?.aborted) return false
     return !boundThreadId || get().activeThreadId === boundThreadId
   }
+  const reduce = (state: ChatState, action: Parameters<typeof reduceChatProjection>[1]): Partial<ChatState> =>
+    reduceChatProjection(state, action, {
+      now: Date.now(),
+      clearRecoveringError: clearRuntimeStreamRecoveringError,
+      goalTimelineText,
+      runtimeStatusText,
+      runtimeErrorView: (event) => describeRuntimeError(runtimeErrorPayloadToError(event)),
+      upsertRuntimeError: upsertRuntimeErrorBlock
+    })
 
   return {
     onSeq: (seq) => {
@@ -1133,230 +1143,47 @@ export function buildThreadEventSink(
         }
       })
     },
-    onApproval: (req) =>
-      set((s) => {
-        if (!isCurrentStream()) return {}
-        resetBusyRecoveryAttempts()
-        if (s.blocks.some((b) => b.kind === 'approval' && b.approvalId === req.approvalId)) {
-          return {}
-        }
-        const flushed = flushLiveBlocks(s)
-        const baseBlocks = flushed.blocks ?? s.blocks
-        return {
-          ...flushed,
-          blocks: [
-            ...baseBlocks,
-            {
-              kind: 'approval',
-              id: `approval-${req.approvalId}`,
-              createdAt: new Date().toISOString(),
-              approvalId: req.approvalId,
-              summary: req.summary,
-              toolName: req.toolName,
-              status: 'pending' as const,
-              ...(req.meta ? { meta: req.meta } : {})
-            }
-          ],
-          error: clearRuntimeStreamRecoveringError(s.error)
-        }
-      }),
-    onUserInput: (req) => {
+    onApproval: (request) => {
+      if (!isCurrentStream()) return
+      resetBusyRecoveryAttempts()
+      set((state) => reduce(state, { type: 'approval_received', payload: request }))
+    },
+    onUserInput: (request) => {
       if (!isCurrentStream()) return
       resetBusyRecoveryAttempts()
       clearBusyWatchdog()
-      set((s) => {
-        const existing = s.blocks.find(
-          (b) => b.kind === 'user_input' && b.requestId === req.requestId
-        )
-        if (existing) {
-          // Already have the block (e.g. rehydrated from history): make sure it
-          // is flagged live so it stays answerable, rather than no-op'ing and
-          // leaving a stale-looking read-only record (#606).
-          if (existing.kind === 'user_input' && existing.live === true) return {}
-          return {
-            blocks: s.blocks.map((b) =>
-              b.kind === 'user_input' && b.requestId === req.requestId
-                ? { ...b, live: true, status: 'pending' as const }
-                : b
-            )
-          }
-        }
-        const flushed = flushLiveBlocks(s)
-        const baseBlocks = flushed.blocks ?? s.blocks
-        return {
-          ...flushed,
-          blocks: [
-            ...baseBlocks,
-            {
-              kind: 'user_input',
-              id: req.itemId,
-              createdAt: new Date().toISOString(),
-              requestId: req.requestId,
-              questions: req.questions,
-              status: 'pending' as const,
-              // Marks this as a request the live runtime is actively awaiting.
-              // Only live blocks are actionable; rehydrated history is not.
-              live: true
-            }
-          ],
-          error: clearRuntimeStreamRecoveringError(s.error)
-        }
-      })
+      set((state) => reduce(state, { type: 'user_input_requested', payload: request }))
     },
-    onUserInputStatus: (ev) => {
+    onUserInputStatus: (event) => {
       if (!isCurrentStream()) return
       resetBusyRecoveryAttempts()
-      if (ev.status === 'submitted' && get().busy) {
-        armBusyWatchdog(set, get)
-      }
-      set((s) => ({
-        error: clearRuntimeStreamRecoveringError(s.error),
-        blocks: s.blocks.map((b) =>
-          b.kind === 'user_input' && b.id === ev.itemId
-            ? b.status === 'submitted' && ev.status === 'error' && isUserInputInterruptError(ev.errorMessage)
-              ? b
-              : {
-                  ...b,
-                  status: ev.status,
-                  answers: ev.answers ?? b.answers,
-                  errorMessage: ev.errorMessage ?? b.errorMessage
-                }
-            : b
-        )
-      }))
+      if (event.status === 'submitted' && get().busy) armBusyWatchdog(set, get)
+      set((state) => reduce(state, { type: 'user_input_status_changed', payload: event }))
     },
-    onRuntimeStatus: (ev) => {
-      if (!isCurrentStream()) return
-      set((s) => {
-        resetBusyRecoveryAttempts()
-        const base: Partial<ChatState> = {}
-        if (!s.busy) {
-          base.busy = true
-          armBusyWatchdog(set, get)
-        }
-        const flushed = flushLiveBlocks(s)
-        const baseBlocks = flushed.blocks ?? s.blocks
-        const text = runtimeStatusText(ev)
-        const block: ChatBlock = {
-          kind: 'system',
-          id: ev.itemId,
-          createdAt: ev.createdAt ?? new Date().toISOString(),
-          text
-        }
-        const idx = baseBlocks.findIndex((candidate) => candidate.kind === 'system' && candidate.id === ev.itemId)
-        const blocks = [...baseBlocks]
-        if (idx >= 0) blocks[idx] = block
-        else blocks.push(block)
-        return {
-          ...base,
-          ...flushed,
-          blocks,
-          error: clearRuntimeStreamRecoveringError(s.error)
-        }
-      })
-    },
-    onRuntimeError: (ev) => {
+    onRuntimeStatus: (event) => {
       if (!isCurrentStream()) return
       resetBusyRecoveryAttempts()
-      set((s) => {
-        const flushed = flushLiveBlocks(s)
-        const baseBlocks = flushed.blocks ?? s.blocks
-        const view = describeRuntimeError(runtimeErrorPayloadToError(ev))
-        const block: Extract<ChatBlock, { kind: 'system' }> = {
-          kind: 'system',
-          id: ev.itemId,
-          createdAt: ev.createdAt ?? new Date().toISOString(),
-          text: view.summary,
-          ...(view.code ? { code: view.code } : {}),
-          ...(view.detail ? { detail: view.detail } : {}),
-          severity: ev.severity ?? 'error'
-        }
-        return {
-          ...flushed,
-          blocks: upsertRuntimeErrorBlock(baseBlocks, block),
-          error: clearRuntimeStreamRecoveringError(s.error)
-        }
-      })
+      if (!get().busy) armBusyWatchdog(set, get)
+      set((state) => reduce(state, { type: 'runtime_status_received', payload: event }))
     },
-    onGoal: (ev) => {
+    onRuntimeError: (event) => {
       if (!isCurrentStream()) return
-      if (!ev.threadId) return
       resetBusyRecoveryAttempts()
-      set((s) => {
-        const currentThread = s.activeThreadId === ev.threadId
-        const updatedAt = ev.goal?.updatedAt ?? ev.createdAt ?? new Date().toISOString()
-        const nextThreads = s.threads.map((thread) =>
-          thread.id === ev.threadId
-            ? {
-                ...thread,
-                goal: ev.goal,
-                updatedAt
-              }
-            : thread
-        )
-        if (!currentThread) {
-          return { threads: nextThreads }
-        }
-        const flushed = flushLiveBlocks(s)
-        const baseBlocks = flushed.blocks ?? s.blocks
-        const block: ChatBlock = {
-          kind: 'system',
-          id: `goal-${ev.threadId}-${updatedAt}-${ev.goal?.status ?? 'cleared'}`,
-          createdAt: updatedAt,
-          text: goalTimelineText(ev.goal, ev.cleared)
-        }
-        return {
-          ...flushed,
-          activeThreadGoal: ev.goal,
-          threads: nextThreads,
-          blocks: [...baseBlocks, block],
-          error: clearRuntimeStreamRecoveringError(s.error)
-        }
-      })
+      set((state) => reduce(state, { type: 'runtime_error_received', payload: event }))
     },
-    onTodos: (ev) => {
+    onGoal: (event) => {
       if (!isCurrentStream()) return
-      if (!ev.threadId) return
       resetBusyRecoveryAttempts()
-      set((s) => {
-        const currentThread = s.activeThreadId === ev.threadId
-        const todos = ev.cleared ? null : ev.todos
-        const updatedAt = todos?.updatedAt ?? ev.createdAt ?? new Date().toISOString()
-        const nextThreads = s.threads.map((thread) =>
-          thread.id === ev.threadId
-            ? {
-                ...thread,
-                todos,
-                updatedAt
-              }
-            : thread
-        )
-        return currentThread
-          ? {
-              activeThreadTodos: todos,
-              threads: nextThreads,
-              error: clearRuntimeStreamRecoveringError(s.error)
-            }
-          : { threads: nextThreads }
-      })
+      set((state) => reduce(state, { type: 'goal_changed', payload: event }))
     },
-    onThreadUpdated: (ev) => {
+    onTodos: (event) => {
       if (!isCurrentStream()) return
-      if (!ev.threadId) return
-      const nextTitle = ev.title?.trim()
-      // Only the title-upgrade path carries a title; ignore status-only updates.
-      if (!nextTitle) return
-      set((s) => ({
-        threads: s.threads.map((thread) =>
-          thread.id === ev.threadId
-            ? {
-                ...thread,
-                title: nextTitle,
-                ...(ev.titleAuto !== undefined ? { titleAuto: ev.titleAuto } : {})
-              }
-            : thread
-        )
-      }))
+      resetBusyRecoveryAttempts()
+      set((state) => reduce(state, { type: 'todos_changed', payload: event }))
+    },
+    onThreadUpdated: (event) => {
+      if (!isCurrentStream()) return
+      set((state) => reduce(state, { type: 'thread_metadata_changed', payload: event }))
     },
     onTurnComplete: () => {
       if (!isCurrentStream()) return
@@ -1491,10 +1318,7 @@ export function buildThreadEventSink(
     },
     onUsage: (usage) => {
       if (!isCurrentStream()) return
-      set((s) => ({
-        usageRefreshKey: s.usageRefreshKey + 1,
-        lastTurnUsage: { threadId: s.activeThreadId ?? '', snapshot: usage }
-      }))
+      set((state) => reduce(state, { type: 'usage_received', payload: usage }))
     }
   }
 }
