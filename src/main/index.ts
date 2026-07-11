@@ -310,7 +310,7 @@ function syncCheckpointCleanupTimer(settings: AppSettingsV1): void {
 
 const runtimeShutdown = new ManagedRuntimeShutdownCoordinator(async () => {
   scheduleRuntime?.stop()
-  workflowRuntime?.stop()
+  await workflowRuntime?.stop()
   await clawRuntime?.stop()
   telegramRuntime?.stop()
   await stopWeixinBridgeRuntime()

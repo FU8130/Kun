@@ -29,8 +29,11 @@ describe('WorkflowRunCoordinator', () => {
       instruction: 'Approve the run',
       createdAt: '2026-07-11T00:00:00.000Z'
     }, 0, 'approved')
+    const signal = coordinator.signal('workflow_1')
 
+    expect(signal?.aborted).toBe(false)
     expect(coordinator.requestCancel('workflow_1')).toBe(true)
+    expect(signal?.aborted).toBe(true)
     await expect(decision).resolves.toBe('rejected')
     expect(coordinator.resolveApproval('approval_token', 'approved')).toBe(false)
   })

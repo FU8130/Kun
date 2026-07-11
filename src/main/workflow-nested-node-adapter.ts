@@ -22,6 +22,10 @@ export type RunNestedWorkflowGraph = (
   context: {
     settings: AppSettingsV1
     depth: number
+    signal?: AbortSignal
+    cancelId?: string
+    statusWorkflowId?: string
+    runId?: string
     loop?: { index: number; item: unknown; total: number }
   }
 ) => Promise<WorkflowGraphRunResult>
@@ -34,9 +38,13 @@ export async function executeNestedWorkflowNode(input: {
   settings: AppSettingsV1
   depth: number
   scope: InterpScope
+  signal?: AbortSignal
+  cancelId?: string
+  statusWorkflowId?: string
+  runId?: string
   runGraph: RunNestedWorkflowGraph
 }): Promise<WorkflowNodeOutcome> {
-  const { depth, node, payload, runGraph, scope, settings } = input
+  const { cancelId, depth, node, payload, runGraph, runId, scope, settings, signal, statusWorkflowId } = input
   if (depth >= MAX_SUBWORKFLOW_DEPTH) {
     throw new Error(node.type === 'subworkflow'
       ? 'Sub-workflow nesting is too deep.'
@@ -54,13 +62,32 @@ export async function executeNestedWorkflowNode(input: {
     throw new Error(node.type === 'subworkflow' ? 'Sub-workflow has no trigger node.' : 'Loop body has no trigger node.')
   }
   if (node.type === 'subworkflow') {
-    const result = await runGraph(target, trigger.id, payload, { settings, depth: depth + 1 })
+    const result = await runGraph(target, trigger.id, payload, {
+      settings,
+      depth: depth + 1,
+      ...(signal ? { signal } : {}),
+      ...(cancelId ? { cancelId } : {}),
+      ...(statusWorkflowId ? { statusWorkflowId } : {}),
+      ...(runId ? { runId } : {})
+    })
     if (result.status === 'error') throw new Error(result.errorMessage || 'Sub-workflow failed.')
     return { payload: result.output, message: `ran ${target.name || 'sub-workflow'}` }
   }
   return node.config.mode === 'foreach'
-    ? executeForEachLoop({ node, payload, settings, depth, target, triggerId: trigger.id, scope, runGraph })
-    : executeUntilLoop({ node, payload, settings, depth, target, triggerId: trigger.id, scope, runGraph })
+    ? executeForEachLoop({
+        node, payload, settings, depth, target, triggerId: trigger.id, scope, runGraph,
+        ...(signal ? { signal } : {}),
+        ...(cancelId ? { cancelId } : {}),
+        ...(statusWorkflowId ? { statusWorkflowId } : {}),
+        ...(runId ? { runId } : {})
+      })
+    : executeUntilLoop({
+        node, payload, settings, depth, target, triggerId: trigger.id, scope, runGraph,
+        ...(signal ? { signal } : {}),
+        ...(cancelId ? { cancelId } : {}),
+        ...(statusWorkflowId ? { statusWorkflowId } : {}),
+        ...(runId ? { runId } : {})
+      })
 }
 
 async function executeForEachLoop(input: {
@@ -72,8 +99,15 @@ async function executeForEachLoop(input: {
   triggerId: string
   scope: InterpScope
   runGraph: RunNestedWorkflowGraph
+  signal?: AbortSignal
+  cancelId?: string
+  statusWorkflowId?: string
+  runId?: string
 }): Promise<WorkflowNodeOutcome> {
-  const { depth, node, payload, runGraph, scope, settings, target, triggerId } = input
+  const {
+    cancelId, depth, node, payload, runGraph, runId, scope, settings, signal,
+    statusWorkflowId, target, triggerId
+  } = input
   const source = node.config.arraySource?.trim()
   const raw = source ? resolveExpr(payload, source, scope) : payload.json
   const items = (Array.isArray(raw) ? raw : []).slice(0, node.config.maxIterations)
@@ -89,6 +123,10 @@ async function executeForEachLoop(input: {
       const result = await runGraph(target, triggerId, itemPayload, {
         settings,
         depth: depth + 1,
+        ...(signal ? { signal } : {}),
+        ...(cancelId ? { cancelId } : {}),
+        ...(statusWorkflowId ? { statusWorkflowId } : {}),
+        ...(runId ? { runId } : {}),
         loop: { index, item, total }
       })
       if (result.status === 'error') throw new Error(result.errorMessage || 'Loop item failed.')
@@ -122,8 +160,15 @@ async function executeUntilLoop(input: {
   triggerId: string
   scope: InterpScope
   runGraph: RunNestedWorkflowGraph
+  signal?: AbortSignal
+  cancelId?: string
+  statusWorkflowId?: string
+  runId?: string
 }): Promise<WorkflowNodeOutcome> {
-  const { depth, node, runGraph, scope, settings, target, triggerId } = input
+  const {
+    cancelId, depth, node, runGraph, runId, scope, settings, signal,
+    statusWorkflowId, target, triggerId
+  } = input
   const stopCondition = {
     leftExpr: node.config.leftExpr,
     operator: node.config.operator,
@@ -137,6 +182,10 @@ async function executeUntilLoop(input: {
     const result = await runGraph(target, triggerId, current, {
       settings,
       depth: depth + 1,
+      ...(signal ? { signal } : {}),
+      ...(cancelId ? { cancelId } : {}),
+      ...(statusWorkflowId ? { statusWorkflowId } : {}),
+      ...(runId ? { runId } : {}),
       loop: { index: iterations, item: current.json, total: node.config.maxIterations }
     })
     iterations += 1

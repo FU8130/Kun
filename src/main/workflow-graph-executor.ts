@@ -35,6 +35,7 @@ export type WorkflowGraphRunResult = {
 
 export type WorkflowGraphExecutionContext = {
   settings: AppSettingsV1
+  signal?: AbortSignal
   statusWorkflowId?: string
   cancelId?: string
   runId?: string
@@ -54,6 +55,9 @@ export type WorkflowNodeExecutionRequest = {
   scope: InterpScope
   runVars: Record<string, unknown>
   runRef?: { workflowId: string; runId: string }
+  cancelId?: string
+  statusWorkflowId?: string
+  signal?: AbortSignal
 }
 
 export async function executeWorkflowGraph(input: {
@@ -134,7 +138,7 @@ export async function executeWorkflowGraph(input: {
   markReady(triggerNodeId)
   try {
     while (readyQueue.length > 0) {
-      if (input.isCanceled()) {
+      if (input.isCanceled() || context.signal?.aborted) {
         status = 'error'
         errorMessage = 'Canceled.'
         break
@@ -199,16 +203,26 @@ export async function executeWorkflowGraph(input: {
               runWorkspace,
               scope: nodeInputs ? { ...baseScope, input: nodeInputs } : baseScope,
               runVars,
+              ...(context.cancelId ? { cancelId: context.cancelId } : {}),
+              ...(context.statusWorkflowId ? { statusWorkflowId: context.statusWorkflowId } : {}),
+              ...(context.signal ? { signal: context.signal } : {}),
               runRef: context.statusWorkflowId && context.runId
                 ? { workflowId: context.statusWorkflowId, runId: context.runId }
                 : undefined
             })
+            if (input.isCanceled() || context.signal?.aborted) {
+              throw new Error('Canceled.')
+            }
             break
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error)
+            if (input.isCanceled() || context.signal?.aborted) {
+              lastError = 'Canceled.'
+              break
+            }
             if (attempt < maxRetries) {
               attempt += 1
-              if (node.retryDelayMs) await sleep(node.retryDelayMs)
+              if (node.retryDelayMs) await sleep(node.retryDelayMs, context.signal)
               continue
             }
             const mode = node.onError ?? 'fail'

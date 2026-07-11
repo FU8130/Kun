@@ -3,6 +3,10 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import type { AppSettingsV1, WorkflowNodeV1 } from '../shared/app-settings'
 import { resolveKunImageGenerationSettings } from '../shared/app-settings'
+import {
+  createImageGenClient,
+  mapImageSize
+} from '../../kun/src/adapters/tool/image-gen-tool-provider.js'
 import { resolveCodexOAuthApiKey } from './codex-auth'
 import { interpolate, type InterpScope, type WorkflowPayload } from './workflow-expression'
 import type { WorkflowNodeOutcome } from './workflow-core-node-adapter'
@@ -46,6 +50,7 @@ export async function executeImageWorkflowNode(input: {
   settings: AppSettingsV1
   runWorkspace: string
   scope: InterpScope
+  signal?: AbortSignal
 }): Promise<WorkflowNodeOutcome> {
   const { node, payload, settings, runWorkspace, scope } = input
   const imageGen = resolveImageSettings(settings, node.config.providerId, node.config.model)
@@ -56,17 +61,17 @@ export async function executeImageWorkflowNode(input: {
   }
   const workspace = (runWorkspace || settings.workflow.defaultWorkspaceRoot.trim() || settings.workspaceRoot).trim()
   const outputDir = outputDirectory(workspace, interpolate(node.config.outputDir, payload, scope))
-  const { createImageGenClient, mapImageSize } = await import('../../kun/src/adapters/tool/image-gen-tool-provider.js')
   const auth = resolveCodexOAuthApiKey(imageGen.apiKey)
   const client = createImageGenClient({ ...imageGen, apiKey: auth.apiKey, ...(auth.headers ? { headers: auth.headers } : {}) })
   const size = node.config.size.trim() || imageGen.defaultSize.trim() || mapImageSize(undefined, undefined, undefined, imageGen.defaultResolution)
+  const timeoutSignal = AbortSignal.timeout(imageGen.timeoutMs)
   const image = await client.generate({
     prompt: interpolate(node.config.prompt, payload, scope),
     model: imageGen.model.trim(),
     quality: imageGen.quality,
     ...(size && size !== 'auto' ? { size } : {}),
     timeoutMs: imageGen.timeoutMs,
-    signal: AbortSignal.timeout(imageGen.timeoutMs)
+    signal: input.signal ? AbortSignal.any([input.signal, timeoutSignal]) : timeoutSignal
   })
   const ext = image.mimeType === 'image/jpeg' ? 'jpg' : image.mimeType === 'image/webp' ? 'webp' : 'png'
   await mkdir(outputDir, { recursive: true })

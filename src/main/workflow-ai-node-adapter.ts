@@ -49,6 +49,7 @@ export async function executeAiWorkflowNode(input: {
   deps: ScheduleRuntimeDeps
   runWorkspace: string
   scope: InterpScope
+  signal?: AbortSignal
 }): Promise<WorkflowNodeOutcome> {
   const { node, payload, settings, deps, runWorkspace, scope } = input
   const modelConfig = resolveScheduleModelConfig(
@@ -73,7 +74,8 @@ export async function executeAiWorkflowNode(input: {
       reasoningEffort: modelConfig.reasoningEffort,
       mode: node.config.mode,
       waitForResult: true,
-      responseTimeoutMs: AI_NODE_RESPONSE_TIMEOUT_MS
+      responseTimeoutMs: AI_NODE_RESPONSE_TIMEOUT_MS,
+      ...(input.signal ? { signal: input.signal } : {})
     })
     if (!result.ok) throw new Error(result.message)
     const text = result.text ?? ''
@@ -96,7 +98,8 @@ export async function executeAiWorkflowNode(input: {
       model: modelConfig.model,
       ...(modelConfig.providerId ? { providerId: modelConfig.providerId } : {}),
       reasoningEffort: modelConfig.reasoningEffort,
-      mode: 'agent', waitForResult: true, responseTimeoutMs: AI_NODE_RESPONSE_TIMEOUT_MS
+      mode: 'agent', waitForResult: true, responseTimeoutMs: AI_NODE_RESPONSE_TIMEOUT_MS,
+      ...(input.signal ? { signal: input.signal } : {})
     })
     if (!result.ok) throw new Error(result.message)
     const parsed = extractJsonObject(result.text ?? '')
@@ -117,7 +120,8 @@ export async function executeAiWorkflowNode(input: {
     model: modelConfig.model,
     ...(modelConfig.providerId ? { providerId: modelConfig.providerId } : {}),
     reasoningEffort: modelConfig.reasoningEffort,
-    mode: 'agent', waitForResult: true, responseTimeoutMs: AI_NODE_RESPONSE_TIMEOUT_MS
+    mode: 'agent', waitForResult: true, responseTimeoutMs: AI_NODE_RESPONSE_TIMEOUT_MS,
+    ...(input.signal ? { signal: input.signal } : {})
   })
   if (!result.ok) throw new Error(result.message)
   const number = Number.parseInt((result.text ?? '').match(/\d+/)?.[0] ?? '', 10)

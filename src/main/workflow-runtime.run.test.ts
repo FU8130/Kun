@@ -712,6 +712,73 @@ describe('WorkflowRuntime end-to-end execution', () => {
     runtime.stop()
   }, 20_000)
 
+  it('stop cancels a nested in-flight HTTP node and waits for terminal persistence', async () => {
+    const child = buildWorkflow({
+      id: 'shutdown-child',
+      name: 'Shutdown child',
+      enabled: true,
+      nodes: [
+        { id: 'child-trigger', type: 'manual-trigger', config: {} },
+        {
+          id: 'child-http',
+          type: 'http-request',
+          config: {
+            method: 'GET',
+            url: 'https://example.test/slow',
+            headers: [],
+            body: '',
+            parseJson: false,
+            timeoutMs: 60_000
+          }
+        }
+      ],
+      connections: [
+        { id: 'child-edge', source: 'child-trigger', target: 'child-http' }
+      ]
+    })
+    const parent = buildWorkflow({
+      id: 'shutdown-parent',
+      name: 'Shutdown parent',
+      enabled: true,
+      nodes: [
+        { id: 'parent-trigger', type: 'manual-trigger', config: {} },
+        { id: 'parent-sub', type: 'subworkflow', config: { workflowId: child.id } }
+      ],
+      connections: [
+        { id: 'parent-edge', source: 'parent-trigger', target: 'parent-sub' }
+      ]
+    })
+    let requestSignal: AbortSignal | undefined
+    let requestStarted!: () => void
+    const started = new Promise<void>((resolve) => { requestStarted = resolve })
+    vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => {
+      requestSignal = init.signal as AbortSignal
+      requestStarted()
+      return new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'))
+        }, { once: true })
+      })
+    }))
+    const store = createStore(settingsWithWorkflows([child, parent]))
+    const runtime = createWorkflowRuntime({
+      store: store as never,
+      runtimeRequest: vi.fn() as never,
+      logError: vi.fn()
+    })
+
+    const runId = requireOk(await runtime.runWorkflow(parent.id))
+    await started
+    await runtime.stop()
+
+    expect(requestSignal?.aborted).toBe(true)
+    const run = store.read().workflow.workflows
+      .find((workflow) => workflow.id === parent.id)!
+      .runs.find((entry) => entry.id === runId)
+    expect(run).toMatchObject({ status: 'error', message: 'Canceled.' })
+    expect((await runtime.status()).runningWorkflowIds).toEqual([])
+  })
+
   it('runForHook runs a bound workflow with the hook payload as {{json.*}}', async () => {
     const workflow = buildWorkflow({
       id: 'hk',

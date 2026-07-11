@@ -77,6 +77,9 @@ type NodeExecutionContext = {
   scope: InterpScope
   runVars: Record<string, unknown>
   runRef?: { workflowId: string; runId: string }
+  signal?: AbortSignal
+  cancelId?: string
+  statusWorkflowId?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +280,10 @@ export class WorkflowRuntime {
   private powerSaveBlockerId: number | null = null
   private webhookServer: Server | null = null
   private webhookServerKey = ''
+  private readonly stopController = new AbortController()
+  private readonly activeRunTasks = new Set<Promise<unknown>>()
+  private stopping = false
+  private stopPromise: Promise<void> | null = null
 
   constructor(deps: ScheduleRuntimeDeps) {
     this.deps = deps
@@ -287,16 +294,26 @@ export class WorkflowRuntime {
   }
 
   sync(settings: AppSettingsV1): void {
+    if (this.stopping) return
     this.startScheduler()
     this.syncPowerSaveBlocker(settings)
     this.syncWebhookServer(settings)
     void this.ensureNextRuns(settings)
   }
 
-  stop(): void {
+  stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise
+    this.stopping = true
+    this.stopController.abort()
+    this.runCoordinator.cancelAll()
     this.scheduler.stop()
     this.stopPowerSaveBlocker()
     this.closeWebhookServer()
+    this.stopPromise = (async () => {
+      await Promise.allSettled([...this.activeRunTasks])
+      await this.workflowUpdateTail.catch(() => undefined)
+    })()
+    return this.stopPromise
   }
 
   private syncWebhookServer(settings: AppSettingsV1): void {
@@ -520,6 +537,9 @@ export class WorkflowRuntime {
     input: unknown,
     workspaceOverride?: string
   ): Promise<{ ok: boolean; status: WorkflowRunStatus; message: string; output: string; runId: string }> {
+    if (this.stopping) {
+      return { ok: false, status: 'error', message: 'Workflow runtime is stopping.', output: '', runId: '' }
+    }
     if (this.runCoordinator.isRunning(workflow.id)) {
       return { ok: false, status: 'error', message: 'Workflow is already running.', output: '', runId: '' }
     }
@@ -564,6 +584,7 @@ export class WorkflowRuntime {
   }
 
   async runWorkflow(workflowId: string, input?: unknown): Promise<WorkflowRunResult> {
+    if (this.stopping) return { ok: false, message: 'Workflow runtime is stopping.' }
     const settings = await this.deps.store.load()
     const workflow = settings.workflow.workflows.find((item) => item.id === workflowId)
     if (!workflow) return { ok: false, message: 'Workflow not found.' }
@@ -586,16 +607,28 @@ export class WorkflowRuntime {
   }
 
   async runSingleNode(workflowId: string, nodeId: string): Promise<WorkflowRunResult> {
+    if (this.stopping) return { ok: false, message: 'Workflow runtime is stopping.' }
     const settings = await this.deps.store.load()
     const workflow = settings.workflow.workflows.find((item) => item.id === workflowId)
     if (!workflow) return { ok: false, message: 'Workflow not found.' }
     const node = workflow.nodes.find((item) => item.id === nodeId)
     if (!node) return { ok: false, message: 'Node not found.' }
     const runId = randomUUID()
-    void (async () => {
+    const task = (async () => {
       const live = this.runCoordinator.beginSingleNode(workflowId, nodeId)
       try {
-        await this.executeNode(node, { json: {}, text: '' }, settings, undefined, 0, resolveRunWorkspace(workflow, settings))
+        await this.executeNode(
+          node,
+          { json: {}, text: '' },
+          settings,
+          undefined,
+          0,
+          resolveRunWorkspace(workflow, settings),
+          {},
+          {},
+          undefined,
+          this.stopController.signal
+        )
         live.set(nodeId, 'success')
       } catch {
         live.set(nodeId, 'error')
@@ -603,11 +636,13 @@ export class WorkflowRuntime {
         this.runCoordinator.finishSingleNode(workflowId, LIVE_STATUS_LINGER_MS)
       }
     })()
+    this.trackRunTask(task)
     return { ok: true, runId, status: 'running', message: 'Started' }
   }
 
   /** Run a single node in isolation against a mock upstream payload, returning its result (not persisted). */
   async testNode(workflowId: string, nodeId: string, mockJson: string): Promise<WorkflowNodeTestResult> {
+    if (this.stopping) return { ok: false, message: 'Workflow runtime is stopping.' }
     const settings = await this.deps.store.load()
     const workflow = settings.workflow.workflows.find((item) => item.id === workflowId)
     if (!workflow) return { ok: false, message: 'Workflow not found.' }
@@ -645,7 +680,9 @@ export class WorkflowRuntime {
         0,
         resolveRunWorkspace(workflow, settings),
         scope,
-        {}
+        {},
+        undefined,
+        this.stopController.signal
       )
       return {
         ok: true,
@@ -686,6 +723,7 @@ export class WorkflowRuntime {
   }
 
   private async tick(): Promise<void> {
+    if (this.stopping) return
     const settings = await this.deps.store.load()
     if (!settings.workflow.enabled) return
     await this.ensureNextRuns(settings)
@@ -702,6 +740,7 @@ export class WorkflowRuntime {
   }
 
   private async ensureNextRuns(settings: AppSettingsV1): Promise<void> {
+    if (this.stopping) return
     if (!settings.workflow.enabled) {
       this.syncPowerSaveBlocker(settings)
       return
@@ -769,7 +808,37 @@ export class WorkflowRuntime {
     this.runCoordinator.setLiveResult(workflowId, result)
   }
 
-  private async runWorkflowInternal(
+  private runWorkflowInternal(
+    workflow: WorkflowV1,
+    triggerNodeId: string,
+    triggerLabel: string,
+    runId = randomUUID(),
+    initialPayload: WorkflowPayload = { json: {}, text: '' },
+    workspaceOverride?: string
+  ): Promise<WorkflowRunResult> {
+    if (this.stopping) {
+      return Promise.resolve({ ok: false, runId, status: 'error', message: 'Workflow runtime is stopping.' })
+    }
+    return this.trackRunTask(this.runWorkflowOwned(
+      workflow,
+      triggerNodeId,
+      triggerLabel,
+      runId,
+      initialPayload,
+      workspaceOverride
+    ))
+  }
+
+  private trackRunTask<T>(task: Promise<T>): Promise<T> {
+    this.activeRunTasks.add(task)
+    void task.then(
+      () => this.activeRunTasks.delete(task),
+      () => this.activeRunTasks.delete(task)
+    )
+    return task
+  }
+
+  private async runWorkflowOwned(
     workflow: WorkflowV1,
     triggerNodeId: string,
     triggerLabel: string,
@@ -781,6 +850,7 @@ export class WorkflowRuntime {
       return { ok: false, message: 'Workflow is already running.' }
     }
     this.runCoordinator.begin(workflow.id, workflow.nodes.map((node) => node.id))
+    const signal = this.runCoordinator.signal(workflow.id) ?? this.stopController.signal
 
     const startedAt = new Date()
     const run: WorkflowRunV1 = {
@@ -812,6 +882,7 @@ export class WorkflowRuntime {
         cancelId: workflow.id,
         runId,
         depth: 0,
+        signal,
         workspaceOverride
       })
       runStatus = result.status
@@ -868,13 +939,18 @@ export class WorkflowRuntime {
         request.runWorkspace,
         request.scope,
         request.runVars,
-        request.runRef
+        request.runRef,
+        request.signal,
+        request.cancelId,
+        request.statusWorkflowId
       ),
       setLive: (nodeId, status) => {
         if (context.statusWorkflowId) this.setLive(context.statusWorkflowId, nodeId, status)
       },
       setLiveResult: (result) => this.setLiveResult(context.statusWorkflowId, result),
-      isCanceled: () => this.runCoordinator.isCanceled(context.cancelId),
+      isCanceled: () => Boolean(
+        context.signal?.aborted || this.runCoordinator.isCanceled(context.cancelId)
+      ),
       logError: (message, details) => this.deps.logError('workflow', message, details)
     })
   }
@@ -888,7 +964,10 @@ export class WorkflowRuntime {
     runWorkspace = '',
     scope: InterpScope = {},
     runVars: Record<string, unknown> = {},
-    runRef?: { workflowId: string; runId: string }
+    runRef?: { workflowId: string; runId: string },
+    signal?: AbortSignal,
+    cancelId?: string,
+    statusWorkflowId?: string
   ): Promise<NodeOutcome> {
     const context: NodeExecutionContext = {
       payload,
@@ -898,7 +977,10 @@ export class WorkflowRuntime {
       runWorkspace,
       scope,
       runVars,
-      runRef
+      runRef,
+      signal,
+      cancelId,
+      statusWorkflowId
     }
     return this.nodeExecutors.execute(node, {
       executeCore: (registeredNode) => this.executeCoreNode(registeredNode, context),
@@ -925,7 +1007,7 @@ export class WorkflowRuntime {
       inputs: context.inputs,
       scope: context.scope,
       runVars: context.runVars,
-      sleep
+      sleep: (ms) => sleep(ms, context.signal)
     })
     if (coreOutcome) return coreOutcome
     throw new Error(`Core workflow node adapter returned no outcome: ${node.type}`)
@@ -941,7 +1023,8 @@ export class WorkflowRuntime {
       settings: context.settings,
       deps: this.deps,
       runWorkspace: context.runWorkspace,
-      scope: context.scope
+      scope: context.scope,
+      ...(context.signal ? { signal: context.signal } : {})
     })
   }
 
@@ -954,7 +1037,8 @@ export class WorkflowRuntime {
       payload: context.payload,
       settings: context.settings,
       runWorkspace: context.runWorkspace,
-      scope: context.scope
+      scope: context.scope,
+      ...(context.signal ? { signal: context.signal } : {})
     })
   }
 
@@ -962,7 +1046,11 @@ export class WorkflowRuntime {
     if (node.type !== 'code') {
       throw new Error(`Code workflow node adapter received unsupported kind: ${node.type}`)
     }
-    return executeCodeWorkflowNode({ node, payload: context.payload })
+    return executeCodeWorkflowNode({
+      node,
+      payload: context.payload,
+      ...(context.signal ? { signal: context.signal } : {})
+    })
   }
 
   private executeNestedNode(node: WorkflowNodeV1, context: NodeExecutionContext): Promise<NodeOutcome> {
@@ -975,6 +1063,10 @@ export class WorkflowRuntime {
       settings: context.settings,
       depth: context.depth,
       scope: context.scope,
+      ...(context.signal ? { signal: context.signal } : {}),
+      ...(context.cancelId ? { cancelId: context.cancelId } : {}),
+      ...(context.statusWorkflowId ? { statusWorkflowId: context.statusWorkflowId } : {}),
+      ...(context.runRef ? { runId: context.runRef.runId } : {}),
       runGraph: (workflow, triggerNodeId, payload, nestedContext) =>
         this.runGraph(workflow, triggerNodeId, payload, nestedContext)
     })
@@ -984,7 +1076,7 @@ export class WorkflowRuntime {
     if (node.type !== 'http-request') {
       throw new Error(`HTTP workflow node adapter received unsupported kind: ${node.type}`)
     }
-    return executeHttpWorkflowNode(node.config, context.payload, context.scope)
+    return executeHttpWorkflowNode(node.config, context.payload, context.scope, context.signal)
   }
 
   private executeApprovalNode(node: WorkflowNodeV1, context: NodeExecutionContext): Promise<NodeOutcome> {
@@ -1009,7 +1101,8 @@ export class WorkflowRuntime {
     return executeCustomWorkflowNode({
       node,
       payload: context.payload,
-      modules: context.settings.workflow.modules
+      modules: context.settings.workflow.modules,
+      ...(context.signal ? { signal: context.signal } : {})
     })
   }
 

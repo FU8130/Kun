@@ -40,10 +40,11 @@ const BASH_BIN = resolveBashBin()
 export function executeCodeWorkflowNode(input: {
   node: CodeNode
   payload: WorkflowPayload
+  signal?: AbortSignal
 }): Promise<WorkflowNodeOutcome> {
   const { node, payload } = input
   return node.config.language === 'python' || node.config.language === 'bash'
-    ? runCommandNode(node.config.language, node.config.code, payload)
+    ? runCommandNode(node.config.language, node.config.code, payload, {}, input.signal)
     : Promise.resolve(runJavascriptNode(node.config.code, payload))
 }
 
@@ -51,12 +52,13 @@ export function executeCustomWorkflowNode(input: {
   node: CustomNode
   payload: WorkflowPayload
   modules: readonly WorkflowCustomModuleV1[]
+  signal?: AbortSignal
 }): Promise<WorkflowNodeOutcome> {
   const module = input.modules.find((item) => item.id === input.node.config.moduleId)
   if (!module) return Promise.reject(new Error('Custom module not found — it may have been deleted.'))
   const fields = coerceModuleFields(module, input.node.config.values)
   return module.language === 'python' || module.language === 'bash'
-    ? runCommandNode(module.language, module.code, input.payload, fields)
+    ? runCommandNode(module.language, module.code, input.payload, fields, input.signal)
     : Promise.resolve(runJavascriptNode(module.code, input.payload, fields))
 }
 
@@ -90,8 +92,10 @@ function runCommandNode(
   language: 'python' | 'bash',
   code: string,
   payload: WorkflowPayload,
-  fields: Record<string, unknown> = {}
+  fields: Record<string, unknown> = {},
+  signal?: AbortSignal
 ): Promise<WorkflowNodeOutcome> {
+  if (signal?.aborted) return Promise.reject(new Error('Workflow canceled.'))
   const bin = language === 'python' ? PYTHON_BIN : BASH_BIN
   return new Promise((resolve, reject) => {
     const child = spawn(bin, ['-c', code], {
@@ -109,12 +113,18 @@ function runCommandNode(
       if (settled) return
       settled = true
       clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
       run()
+    }
+    const onAbort = (): void => {
+      child.kill('SIGKILL')
+      finish(() => reject(new Error('Workflow canceled.')))
     }
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
       finish(() => reject(new Error(`${language} script timed out after ${COMMAND_TIMEOUT_MS}ms`)))
     }, COMMAND_TIMEOUT_MS)
+    signal?.addEventListener('abort', onAbort, { once: true })
     child.stdout.on('data', (chunk) => {
       stdout += String(chunk)
     })

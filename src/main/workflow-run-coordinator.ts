@@ -18,6 +18,8 @@ export class WorkflowRunCoordinator {
   private readonly pendingApprovals = new Map<string, PendingApproval>()
   private readonly liveNodeStatus = new Map<string, Map<string, WorkflowNodeRunStatus>>()
   private readonly liveNodeResults = new Map<string, Map<string, WorkflowNodeRunResultV1>>()
+  private readonly abortControllers = new Map<string, AbortController>()
+  private readonly cleanupTimers = new Set<ReturnType<typeof setTimeout>>()
 
   isRunning(workflowId: string): boolean {
     return this.runningWorkflowIds.has(workflowId)
@@ -27,6 +29,7 @@ export class WorkflowRunCoordinator {
     if (this.runningWorkflowIds.has(workflowId)) return false
     this.runningWorkflowIds.add(workflowId)
     this.cancelRequested.delete(workflowId)
+    this.abortControllers.set(workflowId, new AbortController())
     this.liveNodeStatus.set(workflowId, new Map(nodeIds.map((nodeId) => [nodeId, 'pending'])))
     this.liveNodeResults.set(workflowId, new Map())
     return true
@@ -35,13 +38,17 @@ export class WorkflowRunCoordinator {
   finish(workflowId: string, runId: string, lingerMs: number): void {
     this.runningWorkflowIds.delete(workflowId)
     this.cancelRequested.delete(workflowId)
+    this.abortControllers.delete(workflowId)
     for (const [token, pending] of this.pendingApprovals) {
       if (pending.entry.runId === runId) this.pendingApprovals.delete(token)
     }
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      this.cleanupTimers.delete(timer)
       this.liveNodeStatus.delete(workflowId)
       this.liveNodeResults.delete(workflowId)
     }, lingerMs)
+    timer.unref?.()
+    this.cleanupTimers.add(timer)
   }
 
   beginSingleNode(workflowId: string, nodeId: string): Map<string, WorkflowNodeRunStatus> {
@@ -51,12 +58,18 @@ export class WorkflowRunCoordinator {
   }
 
   finishSingleNode(workflowId: string, lingerMs: number): void {
-    setTimeout(() => this.liveNodeStatus.delete(workflowId), lingerMs)
+    const timer = setTimeout(() => {
+      this.cleanupTimers.delete(timer)
+      this.liveNodeStatus.delete(workflowId)
+    }, lingerMs)
+    timer.unref?.()
+    this.cleanupTimers.add(timer)
   }
 
   requestCancel(workflowId: string): boolean {
     if (!this.runningWorkflowIds.has(workflowId)) return false
     this.cancelRequested.add(workflowId)
+    this.abortControllers.get(workflowId)?.abort()
     for (const pending of this.pendingApprovals.values()) {
       if (pending.entry.workflowId === workflowId) pending.resolve('rejected')
     }
@@ -65,6 +78,17 @@ export class WorkflowRunCoordinator {
 
   isCanceled(workflowId: string | undefined): boolean {
     return workflowId ? this.cancelRequested.has(workflowId) : false
+  }
+
+  signal(workflowId: string): AbortSignal | undefined {
+    return this.abortControllers.get(workflowId)?.signal
+  }
+
+  cancelAll(): void {
+    for (const workflowId of [...this.runningWorkflowIds]) this.requestCancel(workflowId)
+    for (const pending of [...this.pendingApprovals.values()]) pending.resolve('rejected')
+    for (const timer of this.cleanupTimers) clearTimeout(timer)
+    this.cleanupTimers.clear()
   }
 
   setLive(workflowId: string, nodeId: string, status: WorkflowNodeRunStatus): void {

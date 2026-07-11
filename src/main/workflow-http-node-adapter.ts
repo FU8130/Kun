@@ -27,7 +27,8 @@ async function readBodyCapped(response: Response): Promise<string> {
 export async function executeHttpWorkflowNode(
   config: WorkflowHttpRequestConfigV1,
   payload: WorkflowPayload,
-  scope?: InterpScope
+  scope?: InterpScope,
+  signal?: AbortSignal
 ): Promise<WorkflowNodeOutcome> {
   const url = interpolate(config.url, payload, scope).trim()
   let parsed: URL
@@ -38,7 +39,8 @@ export async function executeHttpWorkflowNode(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), config.timeoutMs)
   try {
-    const init: RequestInit = { method: config.method, headers, signal: controller.signal }
+    const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+    const init: RequestInit = { method: config.method, headers, signal: requestSignal }
     if (config.method !== 'GET' && config.method !== 'DELETE' && config.body.trim()) init.body = interpolate(config.body, payload, scope)
     const response = await fetch(url, init)
     const raw = await readBodyCapped(response)
@@ -49,6 +51,7 @@ export async function executeHttpWorkflowNode(
     }
     return { payload: { json, text: raw }, message: `${response.status} ${response.statusText}`.trim() }
   } catch (error) {
+    if (signal?.aborted) throw new Error('Workflow canceled.')
     if (error instanceof Error && error.name === 'AbortError') throw new Error(`Request timed out after ${config.timeoutMs}ms.`)
     throw error
   } finally {
