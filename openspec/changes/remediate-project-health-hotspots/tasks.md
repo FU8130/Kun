@@ -83,16 +83,16 @@
 
 ## 8. Workbench UI composition
 
-- [ ] 8.1 Characterize Composer draft, attachment, mention, keyboard, menu,
+- [x] 8.1 Characterize Composer draft, attachment, mention, keyboard, menu,
   model/reasoning, capacity, send, and focus behavior.
-- [ ] 8.2 Extract Composer draft/attachment/file-mention hooks and focused views.
-- [ ] 8.3 Extract Composer model/reasoning/menu/capacity owners and preserve the
+- [x] 8.2 Extract Composer draft/attachment/file-mention hooks and focused views.
+- [x] 8.3 Extract Composer model/reasoning/menu/capacity owners and preserve the
   public props contract.
-- [ ] 8.4 Characterize Sidebar grouping, worktree resolution, drag/drop, preview,
+- [x] 8.4 Characterize Sidebar grouping, worktree resolution, drag/drop, preview,
   draft history, menus, and selection behavior.
-- [ ] 8.5 Extract deterministic Sidebar selectors and focused project/thread/draft
+- [x] 8.5 Extract deterministic Sidebar selectors and focused project/thread/draft
   components.
-- [ ] 8.6 Verify keyboard-only and accessibility behavior for extracted UI.
+- [x] 8.6 Verify keyboard-only and accessibility behavior for extracted UI.
 
 ## 9. Settings domain contract
 
