@@ -250,12 +250,10 @@ export function MessageTimeline({
   const [jumpRailLayout, setJumpRailLayout] = useState<{
     railLeft: number
     previewLeft: number
-    top: number
   } | null>(null)
   const [jumpRailPreview, setJumpRailPreview] = useState<{
     title: string
     prompt: string
-    top: number
   } | null>(null)
 
   const turns = useMemo(() => groupTurns(blocks), [blocks])
@@ -367,18 +365,15 @@ export function MessageTimeline({
       const railLeft = timelineJumpRailLeft(rect.width)
       setJumpRailLayout({
         railLeft,
-        previewLeft: timelineJumpRailPreviewLeft(railLeft, rect.width),
-        top: container.scrollTop + container.clientHeight / 2
+        previewLeft: timelineJumpRailPreviewLeft(railLeft, rect.width)
       })
     }
     update()
     const observer = new ResizeObserver(update)
     observer.observe(container)
-    container.addEventListener('scroll', update, { passive: true })
     window.addEventListener('resize', update)
     return () => {
       observer.disconnect()
-      container.removeEventListener('scroll', update)
       window.removeEventListener('resize', update)
     }
   }, [visibleTurnAnchors.length])
@@ -400,18 +395,11 @@ export function MessageTimeline({
   }
 
   const showJumpRailPreview = (
-    anchor: { label: string; title: string; prompt: string },
-    node: HTMLButtonElement
+    anchor: { label: string; title: string; prompt: string }
   ): void => {
-    const container = containerRef.current
-    const rect = node.getBoundingClientRect()
-    const containerRect = container?.getBoundingClientRect()
     setJumpRailPreview({
       title: t('timelineJumpTurn', { index: anchor.label }),
-      prompt: anchor.prompt || anchor.title,
-      top: container && containerRect
-        ? rect.top - containerRect.top + container.scrollTop + rect.height / 2
-        : rect.top + rect.height / 2
+      prompt: anchor.prompt || anchor.title
     })
   }
 
@@ -420,43 +408,43 @@ export function MessageTimeline({
     <InjectedMemoryLookupProvider workspaceRoot={workspaceRoot}>
     <div ref={containerRef} className="ds-no-drag relative flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
       {visibleTurnAnchors.length > 2 && jumpRailLayout ? (
-        <nav
-          aria-label={t('timelineJumpRailLabel')}
-          className="timeline-jump-rail"
-          style={{
-            left: `${jumpRailLayout.railLeft}px`,
-            top: `${jumpRailLayout.top}px`
-          }}
-        >
-          {visibleTurnAnchors.map((anchor) => (
-            <button
-              key={anchor.key}
-              type="button"
-              className={`timeline-jump-rail-button${activeTurnKey === anchor.key ? ' is-active' : ''}`}
-              data-wave-level={anchor.waveLevel}
-              title={anchor.title}
-              aria-label={anchor.title}
-              aria-current={activeTurnKey === anchor.key ? 'true' : undefined}
-              onMouseEnter={(event) => showJumpRailPreview(anchor, event.currentTarget)}
-              onFocus={(event) => showJumpRailPreview(anchor, event.currentTarget)}
-              onMouseLeave={() => setJumpRailPreview(null)}
-              onBlur={() => setJumpRailPreview(null)}
-              onClick={() => jumpToTurn(anchor.key)}
-            />
-          ))}
-        </nav>
-      ) : null}
-      {jumpRailPreview && jumpRailLayout ? (
-        <div
-          className="timeline-jump-rail-preview"
-          style={{
-            left: `${jumpRailLayout.previewLeft}px`,
-            top: `${jumpRailPreview.top}px`
-          }}
-          role="tooltip"
-        >
-          <div className="timeline-jump-rail-preview-title">{jumpRailPreview.title}</div>
-          <div className="timeline-jump-rail-preview-text">{jumpRailPreview.prompt}</div>
+        <div className="timeline-jump-rail-anchor">
+          <nav
+            aria-label={t('timelineJumpRailLabel')}
+            className="timeline-jump-rail"
+            style={{
+              left: `${jumpRailLayout.railLeft}px`
+            }}
+          >
+            {visibleTurnAnchors.map((anchor) => (
+              <button
+                key={anchor.key}
+                type="button"
+                className={`timeline-jump-rail-button${activeTurnKey === anchor.key ? ' is-active' : ''}`}
+                data-wave-level={anchor.waveLevel}
+                title={anchor.title}
+                aria-label={anchor.title}
+                aria-current={activeTurnKey === anchor.key ? 'true' : undefined}
+                onMouseEnter={() => showJumpRailPreview(anchor)}
+                onFocus={() => showJumpRailPreview(anchor)}
+                onMouseLeave={() => setJumpRailPreview(null)}
+                onBlur={() => setJumpRailPreview(null)}
+                onClick={() => jumpToTurn(anchor.key)}
+              />
+            ))}
+          </nav>
+          {jumpRailPreview ? (
+            <div
+              className="timeline-jump-rail-preview"
+              style={{
+                left: `${jumpRailLayout.previewLeft}px`
+              }}
+              role="tooltip"
+            >
+              <div className="timeline-jump-rail-preview-title">{jumpRailPreview.title}</div>
+              <div className="timeline-jump-rail-preview-text">{jumpRailPreview.prompt}</div>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <div className={`ds-message-timeline-content ds-chat-column-inset ds-chat-content-max-width mx-auto flex w-full min-w-0 flex-col gap-8 pt-8 ${
@@ -513,6 +501,7 @@ export function MessageTimeline({
           const turnPending = threadHasPendingRuntimeWork(turn.blocks)
           const isLatestTurn = index === visibleTurns.length - 1
           const hasLiveStream = isLatestTurn && !!(liveReasoning.trim() || live.trim())
+          const turnIsProcessing = (busy && isLatestTurn) || turnPending || hasLiveStream
           const showForkPoint =
             forkBoundaryTurnCount !== undefined && absoluteTurnIndex === forkBoundaryTurnCount
           const turnKey = stableTurnKey(turn, absoluteTurnIndex)
@@ -531,7 +520,7 @@ export function MessageTimeline({
               {showForkPoint ? <ThreadForkPoint parentTitle={forkedFromTitle} /> : null}
               <MemoMessageTurn
                 turn={turn}
-                isProcessing={(busy && isLatestTurn) || turnPending || hasLiveStream}
+                isProcessing={turnIsProcessing}
                 liveReasoning={isLatestTurn ? liveReasoning : ''}
                 live={isLatestTurn ? live : ''}
                 durationMs={durationMs}
