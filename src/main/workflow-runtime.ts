@@ -10,7 +10,6 @@ import type {
   AppSettingsV1,
   WorkflowCodeCheckResult,
   WorkflowCodeLanguage,
-  WorkflowConditionConfigV1,
   WorkflowCustomModuleV1,
   WorkflowConnectionV1,
   WorkflowEnvVarV1,
@@ -48,6 +47,18 @@ import { createWorkflowExecutionPlan, selectWorkflowTrigger } from './workflow-g
 import { WorkflowRunCoordinator } from './workflow-run-coordinator'
 import { WorkflowScheduler } from './workflow-scheduler'
 import { createWorkflowNodeExecutorRegistry } from './workflow-node-executor-registry'
+import {
+  buildAiPrompt,
+  evaluateCondition,
+  getByPath,
+  interpolate,
+  resolveExpr,
+  safeJson,
+  stringifyValue,
+  type InterpScope,
+  type WorkflowPayload
+} from './workflow-expression'
+import { executeCoreWorkflowNode } from './workflow-core-node-adapter'
 
 const MAX_NODE_EXECUTIONS = 200
 const MAX_RUN_DURATION_MS = 30 * 60_000
@@ -57,7 +68,6 @@ const AI_NODE_RESPONSE_TIMEOUT_MS = 30 * 60_000
 const HTTP_MAX_RESPONSE_BYTES = 5_000_000
 const LIVE_STATUS_LINGER_MS = 8_000
 
-type WorkflowPayload = { json: unknown; text: string }
 type ScheduleTriggerNode = Extract<WorkflowNodeV1, { type: 'schedule-trigger' }>
 
 type NodeOutcome = {
@@ -188,194 +198,6 @@ function buildAdjacency(connections: WorkflowConnectionV1[]): Map<string, Workfl
     map.set(edge.source, list)
   }
   return map
-}
-
-function safeJson(value: unknown): string {
-  if (value === undefined || value === null) return ''
-  try {
-    return JSON.stringify(value)
-  } catch {
-    return ''
-  }
-}
-
-function readPath(payload: WorkflowPayload, path: string): unknown {
-  const trimmed = path.trim()
-  if (!trimmed || trimmed === 'text') return payload.text
-  if (trimmed === 'json') return payload.json
-  const segments = trimmed.replace(/^json\.?/, '').split('.').filter(Boolean)
-  let cursor: unknown = payload.json
-  for (const segment of segments) {
-    if (cursor && typeof cursor === 'object' && segment in (cursor as Record<string, unknown>)) {
-      cursor = (cursor as Record<string, unknown>)[segment]
-    } else {
-      return undefined
-    }
-  }
-  return cursor
-}
-
-/** Drill into a value by a dot-path (e.g. "user.name"); empty path returns the value itself. */
-function getByPath(value: unknown, path: string): unknown {
-  const trimmed = path.trim()
-  if (!trimmed) return value
-  const segments = trimmed.replace(/^json\.?/, '').split('.').filter(Boolean)
-  let cursor: unknown = value
-  for (const segment of segments) {
-    if (cursor && typeof cursor === 'object' && segment in (cursor as Record<string, unknown>)) {
-      cursor = (cursor as Record<string, unknown>)[segment]
-    } else {
-      return undefined
-    }
-  }
-  return cursor
-}
-
-function stringifyValue(value: unknown): string {
-  if (value === undefined || value === null) return ''
-  return typeof value === 'string' ? value : safeJson(value)
-}
-
-/** Cross-node / variable scope available to {{ }} expressions during a run. */
-export type InterpScope = {
-  /** This node's resolved typed inputs, exposed as {{$input.key}}. */
-  input?: Record<string, unknown>
-  /** nodeId -> that node's output payload (only completed, reachable nodes). */
-  nodes?: Record<string, WorkflowPayload>
-  /** workflow env vars, exposed as {{$env.key}}. */
-  env?: Record<string, unknown>
-  /** run-scoped vars (set-fields scope=run), exposed as {{$run.key}}. */
-  run?: Record<string, unknown>
-  /** current loop frame, exposed as {{$loop.index}} / {{$loop.item}} / {{$loop.total}}. */
-  loop?: { index: number; item: unknown; total: number }
-}
-
-function resolveExpr(payload: WorkflowPayload, expr: string, scope?: InterpScope): unknown {
-  const t = expr.trim()
-  if (t.startsWith('$nodes.')) {
-    const rest = t.slice('$nodes.'.length)
-    const dot = rest.indexOf('.')
-    const nodeId = dot === -1 ? rest : rest.slice(0, dot)
-    const sub = dot === -1 ? '' : rest.slice(dot + 1)
-    const np = scope?.nodes?.[nodeId]
-    if (!np) return undefined
-    if (!sub || sub === 'json') return np.json
-    if (sub === 'text') return np.text
-    return getByPath(np.json, sub.replace(/^json\.?/, ''))
-  }
-  if (t.startsWith('$input.')) {
-    const rest = t.slice('$input.'.length)
-    const dot = rest.indexOf('.')
-    const key = dot === -1 ? rest : rest.slice(0, dot)
-    const sub = dot === -1 ? '' : rest.slice(dot + 1)
-    const base = scope?.input?.[key]
-    return sub ? getByPath(base, sub) : base
-  }
-  if (t.startsWith('$env.')) return scope?.env?.[t.slice('$env.'.length)]
-  if (t.startsWith('$run.')) {
-    const rest = t.slice('$run.'.length)
-    const dot = rest.indexOf('.')
-    const key = dot === -1 ? rest : rest.slice(0, dot)
-    const sub = dot === -1 ? '' : rest.slice(dot + 1)
-    const base = scope?.run?.[key]
-    return sub ? getByPath(base, sub) : base
-  }
-  if (t === '$loop.index') return scope?.loop?.index
-  if (t === '$loop.total') return scope?.loop?.total
-  if (t === '$loop.item' || t.startsWith('$loop.item.')) {
-    const item = scope?.loop?.item
-    const sub = t === '$loop.item' ? '' : t.slice('$loop.item.'.length)
-    return sub ? getByPath(item, sub) : item
-  }
-  return readPath(payload, t)
-}
-
-function interpolate(template: string, payload: WorkflowPayload, scope?: InterpScope): string {
-  return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, expr: string) => stringifyValue(resolveExpr(payload, expr, scope)))
-}
-
-/** Whether a template references at least one {{ }} expression. */
-function hasInterpolation(template: string): boolean {
-  return /\{\{\s*[^}]+?\s*\}\}/.test(template)
-}
-
-/** A trimmed string, treating empty JSON literals ({} / [] / null) as "no content". */
-function meaningfulText(value: string): string {
-  const trimmed = value.trim()
-  return trimmed === '{}' || trimmed === '[]' || trimmed === 'null' ? '' : trimmed
-}
-
-/**
- * The upstream input rendered as plain text, for AI prompts that don't explicitly
- * template it. A node's declared typed inputs ($input) win; otherwise the upstream
- * payload's text, then a primitive json value. Empty/empty-object payloads → ''.
- */
-function buildUpstreamContext(payload: WorkflowPayload, inputs?: Record<string, unknown>): string {
-  if (inputs && Object.keys(inputs).length > 0) {
-    return Object.entries(inputs)
-      .map(([key, value]) => `${key}: ${stringifyValue(value)}`)
-      .join('\n')
-      .trim()
-  }
-  const text = meaningfulText(payload.text ?? '')
-  if (text) return text
-  const json = payload.json
-  if (json !== null && json !== undefined && typeof json !== 'object') return stringifyValue(json)
-  return ''
-}
-
-/**
- * Assemble an AI node's prompt. The configured prompt is interpolated as usual;
- * when it has no {{ }} reference, the upstream input is appended so an AI node
- * that doesn't explicitly template its input still receives it.
- */
-function buildAiPrompt(template: string, payload: WorkflowPayload, scope: InterpScope): string {
-  const rendered = interpolate(template, payload, scope)
-  if (hasInterpolation(template)) return rendered
-  const context = buildUpstreamContext(payload, scope.input)
-  if (!context) return rendered
-  const base = rendered.trim()
-  return base ? `${base}\n\n${context}` : context
-}
-
-function evaluateCondition(
-  config: WorkflowConditionConfigV1,
-  payload: WorkflowPayload,
-  scope?: InterpScope
-): boolean {
-  const leftRaw = config.leftExpr.trim() ? resolveExpr(payload, config.leftExpr, scope) : payload.text
-  const left = stringifyValue(leftRaw)
-  const right = config.rightValue
-  const l = config.caseSensitive ? left : left.toLowerCase()
-  const r = config.caseSensitive ? right : right.toLowerCase()
-  switch (config.operator) {
-    case 'contains':
-      return l.includes(r)
-    case 'notContains':
-      return !l.includes(r)
-    case 'equals':
-      return l === r
-    case 'notEquals':
-      return l !== r
-    case 'startsWith':
-      return l.startsWith(r)
-    case 'endsWith':
-      return l.endsWith(r)
-    case 'isEmpty':
-      return left.trim() === ''
-    case 'isNotEmpty':
-      return left.trim() !== ''
-    case 'gt':
-      return Number(left) > Number(right)
-    case 'gte':
-      return Number(left) >= Number(right)
-    case 'lt':
-      return Number(left) < Number(right)
-    case 'lte':
-      return Number(left) <= Number(right)
-    default:
-      return false
-  }
 }
 
 async function readBodyCapped(response: Response, limit: number): Promise<string> {
@@ -1803,6 +1625,15 @@ export class WorkflowRuntime {
     runVars: Record<string, unknown>,
     runRef?: { workflowId: string; runId: string }
   ): Promise<NodeOutcome> {
+    const coreOutcome = await executeCoreWorkflowNode({
+      node,
+      payload,
+      inputs,
+      scope,
+      runVars,
+      sleep
+    })
+    if (coreOutcome) return coreOutcome
     switch (node.type) {
       case 'manual-trigger':
       case 'schedule-trigger':
